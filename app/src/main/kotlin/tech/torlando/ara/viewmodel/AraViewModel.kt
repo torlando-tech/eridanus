@@ -43,6 +43,8 @@ data class DiscoveredHub(
 
 data class AvailableRoom(val name: String, val topic: String?)
 
+data class RoomMember(val nick: String?, val hashPrefix: String)
+
 data class ChatMessage(
     val nick: String?,
     val body: String,
@@ -113,6 +115,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _roomMemberCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
     val roomMemberCounts: StateFlow<Map<String, Int>> = _roomMemberCounts
+
+    private val _roomMemberList = MutableStateFlow<Map<String, List<RoomMember>>>(emptyMap())
+    val roomMemberList: StateFlow<Map<String, List<RoomMember>>> = _roomMemberList
 
     // Hub browser (persisted via Room)
     val discoveredHubs: StateFlow<List<DiscoveredHub>> = hubDao.observeAll()
@@ -289,6 +294,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _availableRooms.value = emptyList()
             _roomTopics.value = emptyMap()
             _roomMemberCounts.value = emptyMap()
+            _roomMemberList.value = emptyMap()
         }
     }
 
@@ -381,6 +387,16 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             val counts = _unreadCounts.value.toMutableMap()
             counts.remove(room)
             _unreadCounts.value = counts
+        }
+    }
+
+    fun refreshMemberList(room: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                rrcClient?.sendCommand("/who $room", room = room)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to request member list", e)
+            }
         }
     }
 
@@ -646,6 +662,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 _availableRooms.value = emptyList()
                 _roomTopics.value = emptyMap()
                 _roomMemberCounts.value = emptyMap()
+                _roomMemberList.value = emptyMap()
             }
 
             is RrcEvent.ConnectionFailed -> {
@@ -687,15 +704,37 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun parseMembersNotice(body: String) {
-        // "members in {room}: nick1 (hash1), nick2 (hash2)"
+        // "members in {room}: nick1 (hash1), nick2 (hash2)" or "(none)"
         val membersIn = Regex("""^members in (\S+): (.+)$""")
         membersIn.find(body)?.let { match ->
             val room = match.groupValues[1]
             val memberList = match.groupValues[2]
-            val count = memberList.split(",").size
+            if (memberList == "(none)") {
+                val counts = _roomMemberCounts.value.toMutableMap()
+                counts[room] = 0
+                _roomMemberCounts.value = counts
+                val members = _roomMemberList.value.toMutableMap()
+                members[room] = emptyList()
+                _roomMemberList.value = members
+                return
+            }
+            // Parse "nick (hash12hex), nick2 (hash12hex)" or bare "fullhex"
+            val entryPattern = Regex("""(.+?)\s+\(([0-9a-f]+)\)""")
+            val parsed = memberList.split(",").map { entry ->
+                val trimmed = entry.trim()
+                val entryMatch = entryPattern.find(trimmed)
+                if (entryMatch != null) {
+                    RoomMember(nick = entryMatch.groupValues[1], hashPrefix = entryMatch.groupValues[2])
+                } else {
+                    RoomMember(nick = null, hashPrefix = trimmed)
+                }
+            }
             val counts = _roomMemberCounts.value.toMutableMap()
-            counts[room] = count
+            counts[room] = parsed.size
             _roomMemberCounts.value = counts
+            val members = _roomMemberList.value.toMutableMap()
+            members[room] = parsed
+            _roomMemberList.value = members
         }
     }
 
