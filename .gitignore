@@ -1,0 +1,13 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+/reticulum-kt/rns-android/build
+/reticulum-kt/rns-core/build
+/reticulum-kt/rns-interfaces/build

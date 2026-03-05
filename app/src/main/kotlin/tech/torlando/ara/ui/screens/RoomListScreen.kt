@@ -1,0 +1,169 @@
+package tech.torlando.ara.ui.screens
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import tech.torlando.ara.viewmodel.AraViewModel
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RoomListScreen(
+    viewModel: AraViewModel,
+    onNavigateToChat: (String) -> Unit,
+) {
+    val joinedRooms by viewModel.joinedRooms.collectAsState()
+    val unreadCounts by viewModel.unreadCounts.collectAsState()
+    val clientState by viewModel.clientState.collectAsState()
+    val connectedHub by viewModel.connectedHubName.collectAsState()
+    var showJoinDialog by remember { mutableStateOf(false) }
+    var roomNameInput by remember { mutableStateOf("") }
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("Rooms")
+                        if (connectedHub != null) {
+                            Text(
+                                text = "Connected to $connectedHub",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+            )
+        },
+        floatingActionButton = {
+            if (clientState == tech.torlando.ara.rrc.ClientState.ACTIVE) {
+                FloatingActionButton(onClick = { showJoinDialog = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Join Room")
+                }
+            }
+        },
+    ) { paddingValues ->
+        if (joinedRooms.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (clientState == tech.torlando.ara.rrc.ClientState.ACTIVE) {
+                        "No rooms joined yet.\nTap + to join a room."
+                    } else {
+                        "Not connected to a hub.\nGo to Discover to find one."
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(joinedRooms.toList().sorted()) { room ->
+                    val unread = unreadCounts[room] ?: 0
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clickable { onNavigateToChat(room) },
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "#$room",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            if (unread > 0) {
+                                Badge { Text("$unread") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showJoinDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showJoinDialog = false
+                    roomNameInput = ""
+                },
+                title = { Text("Join Room") },
+                text = {
+                    OutlinedTextField(
+                        value = roomNameInput,
+                        onValueChange = { roomNameInput = it },
+                        label = { Text("Room name") },
+                        singleLine = true,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            if (roomNameInput.isNotBlank()) {
+                                viewModel.joinRoom(roomNameInput.trim())
+                                showJoinDialog = false
+                                roomNameInput = ""
+                            }
+                        },
+                    ) {
+                        Text("Join")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showJoinDialog = false
+                        roomNameInput = ""
+                    }) {
+                        Text("Cancel")
+                    }
+                },
+            )
+        }
+    }
+}
