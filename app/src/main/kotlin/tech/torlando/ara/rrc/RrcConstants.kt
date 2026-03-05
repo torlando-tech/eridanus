@@ -30,6 +30,8 @@ object RrcConstants {
 
     const val T_ERROR = 40
 
+    const val T_RESOURCE_ENVELOPE = 50
+
     // HELLO body keys
     const val B_HELLO_NAME = 0
     const val B_HELLO_VER = 1
@@ -54,6 +56,19 @@ object RrcConstants {
     const val DEFAULT_MAX_MSG_BODY_BYTES = 350
     const val DEFAULT_MAX_ROOMS_PER_SESSION = 32
     const val DEFAULT_RATE_LIMIT_MSGS_PER_MINUTE = 240
+
+    // Resource envelope body keys
+    const val B_RES_ID = 0
+    const val B_RES_KIND = 1
+    const val B_RES_SIZE = 2
+    const val B_RES_SHA256 = 3
+    const val B_RES_ENCODING = 4
+
+    // HELLO capabilities
+    const val CAP_RESOURCE_ENVELOPE = 0
+
+    // Invite TTL (milliseconds)
+    const val DEFAULT_INVITE_TTL_MS = 900_000L  // 15 minutes
 
     // Destination name for hubs
     const val DEST_NAME = "rrc.hub"

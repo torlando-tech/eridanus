@@ -49,7 +49,7 @@ data class HubSession(
 )
 
 class RrcHub(
-    private val identity: Identity,
+    internal val identity: Identity,
     var hubName: String = "Ara Hub",
 ) {
     companion object {
@@ -58,7 +58,8 @@ class RrcHub(
 
     private var destination: Destination? = null
     private val sessions = mutableMapOf<Link, HubSession>()
-    private val roomMembers = mutableMapOf<String, MutableSet<Link>>()
+    private val roomManager = HubRoomManager()
+    private val commandHandler = HubCommandHandler(this, roomManager)
 
     private val _connectedClients = MutableStateFlow(0)
     val connectedClients: StateFlow<Int> = _connectedClients
@@ -140,11 +141,34 @@ class RrcHub(
             try { link.teardown() } catch (_: Exception) {}
         }
         sessions.clear()
-        roomMembers.clear()
+        roomManager.clear()
         _connectedClients.value = 0
         destination = null
         Log.i(TAG, "Hub stopped")
     }
+
+    // ── Internal accessors for command handler ─────────────────────────
+
+    internal fun getSession(link: Link): HubSession? = sessions[link]
+
+    internal fun allSessions(): List<Pair<Link, HubSession>> =
+        sessions.entries.map { it.key to it.value }
+
+    internal fun sendNotice(link: Link, room: String?, text: String) {
+        val env = RrcEnvelope.make(T_NOTICE, src = identity.hash, room = room, body = text)
+        sendPacket(link, env)
+    }
+
+    internal fun sendError(link: Link, text: String, room: String? = null) {
+        val env = RrcEnvelope.make(T_ERROR, src = identity.hash, room = room, body = text)
+        sendPacket(link, env)
+    }
+
+    internal fun updateNickIndex(@Suppress("UNUSED_PARAMETER") link: Link, @Suppress("UNUSED_PARAMETER") oldNick: String?, @Suppress("UNUSED_PARAMETER") newNick: String) {
+        // Nick tracked on session; command handler iterates sessions for lookup
+    }
+
+    // ── Link lifecycle ─────────────────────────────────────────────────
 
     private fun onLinkEstablished(link: Link) {
         Log.i(TAG, "New link established from remote")
@@ -162,23 +186,34 @@ class RrcHub(
 
     private fun onLinkClosed(link: Link) {
         val session = sessions.remove(link) ?: return
+        val peerHash = session.peerHash
+
+        // Notify all rooms this session was in
         for (room in session.rooms) {
-            roomMembers[room]?.remove(link)
-            if (roomMembers[room]?.isEmpty() == true) {
-                roomMembers.remove(room)
+            val remaining = roomManager.getMembers(room).filter { it != link }
+            roomManager.removeMember(room, link)
+
+            if (peerHash != null && remaining.isNotEmpty()) {
+                val parted = RrcEnvelope.make(
+                    T_PARTED, src = identity.hash, room = room,
+                    body = listOf(peerHash),
+                )
+                val payload = RrcCodec.encode(parted)
+                for (memberLink in remaining) {
+                    try { memberLink.send(payload) } catch (_: Exception) {}
+                }
             }
         }
+
         _connectedClients.value = sessions.size
         Log.d(TAG, "Link closed, clients: ${sessions.size}")
     }
 
+    // ── Packet handling ────────────────────────────────────────────────
+
     @Suppress("UNCHECKED_CAST")
     private fun onPacket(link: Link, data: ByteArray) {
-        Log.i(TAG, "Packet received (${data.size} bytes)")
-        val session = sessions[link] ?: run {
-            Log.w(TAG, "No session for link")
-            return
-        }
+        val session = sessions[link] ?: return
 
         if (session.peerHash == null) {
             val ri = link.getRemoteIdentity()
@@ -196,7 +231,6 @@ class RrcHub(
         }
 
         val type = env[K_T] as? Int ?: return
-        Log.i(TAG, "Received message type=$type welcomed=${session.welcomed}")
 
         if (!session.welcomed) {
             if (type != T_HELLO) {
@@ -207,113 +241,217 @@ class RrcHub(
             if (nick != null) session.nick = normalizeNick(nick)
             session.welcomed = true
             sendWelcome(link)
-            Log.i(TAG, "HELLO from ${session.nick ?: "anonymous"}")
             return
         }
 
         when (type) {
-            T_HELLO -> {
-                // Re-hello: reset session
-                val oldRooms = session.rooms.toSet()
-                session.rooms.clear()
-                session.welcomed = false
-                for (r in oldRooms) {
-                    roomMembers[r]?.remove(link)
-                }
-                val nick = env[K_NICK] as? String
-                if (nick != null) session.nick = normalizeNick(nick)
-                session.welcomed = true
-                sendWelcome(link)
-            }
-
-            T_JOIN -> {
-                val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
-                if (room.isNullOrEmpty()) {
-                    sendError(link, "JOIN requires room name")
-                    return
-                }
-                if (session.rooms.size >= RrcConstants.DEFAULT_MAX_ROOMS_PER_SESSION) {
-                    sendError(link, "too many rooms")
-                    return
-                }
-                session.rooms.add(room)
-                val members = roomMembers.getOrPut(room) { mutableSetOf() }
-                members.add(link)
-
-                // Notify all members (including joiner)
-                for (memberLink in members) {
-                    val joined = RrcEnvelope.make(T_JOINED, src = identity.hash, room = room)
-                    sendPacket(memberLink, joined)
-                }
-            }
-
-            T_PART -> {
-                val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
-                if (room.isNullOrEmpty()) {
-                    sendError(link, "PART requires room name")
-                    return
-                }
-                session.rooms.remove(room)
-                roomMembers[room]?.remove(link)
-
-                // Notify remaining members
-                roomMembers[room]?.forEach { memberLink ->
-                    val parted = RrcEnvelope.make(T_PARTED, src = identity.hash, room = room)
-                    sendPacket(memberLink, parted)
-                }
-
-                // Send PARTED to the departing client
-                val parted = RrcEnvelope.make(T_PARTED, src = identity.hash, room = room)
-                sendPacket(link, parted)
-
-                if (roomMembers[room]?.isEmpty() == true) roomMembers.remove(room)
-            }
-
-            T_MSG, T_NOTICE -> {
-                val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
-                if (room.isNullOrEmpty()) {
-                    sendError(link, "message requires room name")
-                    return
-                }
-                if (room !in session.rooms) {
-                    sendError(link, "not in room")
-                    return
-                }
-
-                // Stamp the src and nick on the envelope
-                val forwarded = env.toMutableMap()
-                session.peerHash?.let { forwarded[K_SRC] = it }
-                session.nick?.let { forwarded[K_NICK] = it }
-                // Also accept nick updates from the message
-                val incomingNick = env[K_NICK] as? String
-                if (incomingNick != null) {
-                    val normalized = normalizeNick(incomingNick)
-                    if (normalized != null) {
-                        session.nick = normalized
-                        forwarded[K_NICK] = normalized
-                    }
-                }
-                forwarded[K_ROOM] = room
-
-                val payload = RrcCodec.encode(forwarded)
-                roomMembers[room]?.forEach { memberLink ->
-                    try {
-                        memberLink.send(payload)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to forward message", e)
-                    }
-                }
-            }
-
+            T_HELLO -> handleReHello(link, session, env)
+            T_JOIN -> handleJoin(link, session, env)
+            T_PART -> handlePart(link, session, env)
+            T_MSG, T_NOTICE -> handleMessage(link, session, env)
             T_PING -> {
                 val body = env[K_BODY]
                 val pong = RrcEnvelope.make(T_PONG, src = identity.hash, body = body)
                 sendPacket(link, pong)
             }
-
             T_PONG -> { /* ignored */ }
         }
     }
+
+    // ── T_HELLO (re-auth) ──────────────────────────────────────────────
+
+    private fun handleReHello(link: Link, session: HubSession, env: Map<Int, Any?>) {
+        val oldRooms = session.rooms.toSet()
+        session.rooms.clear()
+        session.welcomed = false
+        for (r in oldRooms) {
+            roomManager.removeMember(r, link)
+        }
+        val nick = env[K_NICK] as? String
+        if (nick != null) session.nick = normalizeNick(nick)
+        session.welcomed = true
+        sendWelcome(link)
+    }
+
+    // ── T_JOIN ─────────────────────────────────────────────────────────
+
+    private fun handleJoin(link: Link, session: HubSession, env: Map<Int, Any?>) {
+        val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
+        if (room.isNullOrEmpty()) {
+            sendError(link, "JOIN requires room name")
+            return
+        }
+        if (session.rooms.size >= RrcConstants.DEFAULT_MAX_ROOMS_PER_SESSION) {
+            sendError(link, "too many rooms")
+            return
+        }
+
+        val peerHash = session.peerHash ?: return
+        val bodyKey = env[K_BODY] as? String
+
+        // Join validation (bans, invite-only, key)
+        val rejectReason = roomManager.checkJoinAllowed(room, peerHash, bodyKey)
+        if (rejectReason != null) {
+            sendError(link, rejectReason, room)
+            return
+        }
+
+        // First joiner becomes founder
+        val isFirstJoiner = roomManager.getMembers(room).isEmpty()
+        if (isFirstJoiner) {
+            roomManager.getOrCreateState(room, founder = peerHash)
+        } else {
+            roomManager.getOrCreateState(room)
+        }
+
+        // Notify existing members: T_JOINED body=[joinerHash]
+        val existingMembers = roomManager.getMembers(room).toList()
+        if (existingMembers.isNotEmpty()) {
+            val notification = RrcEnvelope.make(
+                T_JOINED, src = identity.hash, room = room,
+                body = listOf(peerHash),
+            )
+            val notificationPayload = RrcCodec.encode(notification)
+            for (memberLink in existingMembers) {
+                try { memberLink.send(notificationPayload) } catch (_: Exception) {}
+            }
+        }
+
+        // Add to room
+        session.rooms.add(room)
+        roomManager.addMember(room, link)
+
+        // Send T_JOINED to joiner: body=[all member hashes]
+        val allMemberHashes = mutableListOf<ByteArray>()
+        for (memberLink in roomManager.getMembers(room)) {
+            val s = sessions[memberLink]
+            val ph = s?.peerHash
+            if (ph != null) allMemberHashes.add(ph)
+        }
+        val joinedEnv = RrcEnvelope.make(
+            T_JOINED, src = identity.hash, room = room,
+            body = allMemberHashes,
+        )
+        sendPacket(link, joinedEnv)
+
+        // Remove from invited list (consume invite)
+        val st = roomManager.getState(room)
+        st?.invited?.remove(peerHash.asKey())
+
+        // Send join notice with room info
+        val registered = st?.registered == true
+        val topic = st?.topic
+        val modeStr = roomManager.getModeString(room)
+        val regTxt = if (registered) "registered" else "unregistered"
+        val topicTxt = topic ?: "(none)"
+        sendNotice(link, room, "room $room: $regTxt; mode=$modeStr; topic=$topicTxt")
+    }
+
+    // ── T_PART ─────────────────────────────────────────────────────────
+
+    private fun handlePart(link: Link, session: HubSession, env: Map<Int, Any?>) {
+        val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
+        if (room.isNullOrEmpty()) {
+            sendError(link, "PART requires room name")
+            return
+        }
+
+        val peerHash = session.peerHash
+        session.rooms.remove(room)
+
+        // Notify remaining members with parter's hash
+        val remaining = roomManager.getMembers(room).filter { it != link }
+        roomManager.removeMember(room, link)
+
+        if (peerHash != null && remaining.isNotEmpty()) {
+            val notification = RrcEnvelope.make(
+                T_PARTED, src = identity.hash, room = room,
+                body = listOf(peerHash),
+            )
+            val notificationPayload = RrcCodec.encode(notification)
+            for (memberLink in remaining) {
+                try { memberLink.send(notificationPayload) } catch (_: Exception) {}
+            }
+        }
+
+        // Send PARTED to the departing client with own hash
+        val partedBody = if (peerHash != null) listOf(peerHash) else null
+        val parted = RrcEnvelope.make(T_PARTED, src = identity.hash, room = room, body = partedBody)
+        sendPacket(link, parted)
+    }
+
+    // ── T_MSG / T_NOTICE ───────────────────────────────────────────────
+
+    private fun handleMessage(link: Link, session: HubSession, env: Map<Int, Any?>) {
+        val body = env[K_BODY]
+        val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
+        val peerHash = session.peerHash
+
+        // Slash command dispatch
+        if (body is String && body.trim().startsWith("/")) {
+            val handled = commandHandler.handle(session, room, body)
+            if (handled) return
+            sendError(link, "unrecognized command", room)
+            return
+        }
+
+        // Room required for regular messages
+        if (room.isNullOrEmpty()) {
+            sendError(link, "message requires room name")
+            return
+        }
+
+        // +n check: no outside messages
+        if (room !in session.rooms) {
+            val st = roomManager.getState(room)
+            if (st == null) {
+                sendError(link, "no such room", room)
+                return
+            }
+            if (st.noOutsideMsgs) {
+                sendError(link, "no outside messages (+n)", room)
+                return
+            }
+        }
+
+        // Ban check
+        if (roomManager.isBanned(room, peerHash)) {
+            sendError(link, "banned from room", room)
+            return
+        }
+
+        // +m check: moderation
+        val st = roomManager.getState(room)
+        if (st != null && st.moderated && !roomManager.isVoiced(room, peerHash)) {
+            sendError(link, "room is moderated (+m)", room)
+            return
+        }
+
+        // Stamp src/nick and forward
+        val forwarded = env.toMutableMap()
+        peerHash?.let { forwarded[K_SRC] = it }
+        session.nick?.let { forwarded[K_NICK] = it }
+
+        // Accept nick updates from the message
+        val incomingNick = env[K_NICK] as? String
+        if (incomingNick != null) {
+            val normalized = normalizeNick(incomingNick)
+            if (normalized != null) {
+                val oldNick = session.nick
+                session.nick = normalized
+                forwarded[K_NICK] = normalized
+                updateNickIndex(link, oldNick, normalized)
+            }
+        }
+        forwarded[K_ROOM] = room
+
+        val payload = RrcCodec.encode(forwarded)
+        for (memberLink in roomManager.getMembers(room)) {
+            try { memberLink.send(payload) } catch (_: Exception) {}
+        }
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
 
     private fun sendWelcome(link: Link) {
         val welcomeBody = mapOf<Int, Any?>(
@@ -332,16 +470,10 @@ class RrcHub(
         sendPacket(link, env)
     }
 
-    private fun sendError(link: Link, text: String, room: String? = null) {
-        val env = RrcEnvelope.make(T_ERROR, src = identity.hash, room = room, body = text)
-        sendPacket(link, env)
-    }
-
     private fun sendPacket(link: Link, env: Map<Int, Any?>) {
         try {
             val payload = RrcCodec.encode(env)
-            val sent = link.send(payload)
-            Log.i(TAG, "sendPacket type=${env[K_T]} size=${payload.size} sent=$sent")
+            link.send(payload)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to send packet", e)
         }

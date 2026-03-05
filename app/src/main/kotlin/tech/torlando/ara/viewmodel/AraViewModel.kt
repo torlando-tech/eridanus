@@ -108,6 +108,12 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
     private val _availableRooms = MutableStateFlow<List<AvailableRoom>>(emptyList())
     val availableRooms: StateFlow<List<AvailableRoom>> = _availableRooms
 
+    private val _roomTopics = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val roomTopics: StateFlow<Map<String, String?>> = _roomTopics
+
+    private val _roomMemberCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val roomMemberCounts: StateFlow<Map<String, Int>> = _roomMemberCounts
+
     // Hub browser (persisted via Room)
     val discoveredHubs: StateFlow<List<DiscoveredHub>> = hubDao.observeAll()
         .map { entities ->
@@ -281,13 +287,15 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _messages.value = emptyMap()
             _unreadCounts.value = emptyMap()
             _availableRooms.value = emptyList()
+            _roomTopics.value = emptyMap()
+            _roomMemberCounts.value = emptyMap()
         }
     }
 
-    fun joinRoom(room: String) {
+    fun joinRoom(room: String, key: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                rrcClient?.join(room)
+                rrcClient?.join(room, key = key?.ifEmpty { null })
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to join room", e)
             }
@@ -304,8 +312,36 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun sendMessage(text: String) {
+    fun sendInput(text: String) {
         val room = _currentRoom.value ?: return
+        val trimmed = text.trim()
+        if (trimmed.startsWith("/")) {
+            val parts = trimmed.split(" ", limit = 2)
+            val cmd = parts[0].lowercase()
+            val rest = parts.getOrNull(1) ?: ""
+            val roomScoped = setOf(
+                "/topic", "/who", "/names", "/kick", "/ban",
+                "/op", "/deop", "/voice", "/devoice",
+                "/mode", "/register", "/unregister", "/invite"
+            )
+            if (cmd == "/help") {
+                showHelpMessage(room)
+                return
+            }
+            val commandRoom = if (cmd in roomScoped) room else null
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    rrcClient?.sendCommand(trimmed, room = commandRoom)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send command", e)
+                }
+            }
+        } else {
+            sendMessage(room, trimmed)
+        }
+    }
+
+    private fun sendMessage(room: String, text: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 rrcClient?.sendMessage(room, text)
@@ -313,6 +349,30 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e(TAG, "Failed to send message", e)
             }
         }
+    }
+
+    private fun showHelpMessage(room: String) {
+        val helpText = """Available commands:
+/topic [text] — view or set room topic
+/who — list room members
+/kick <user> — kick a user
+/ban add|del|list [user] — manage bans
+/op <user> — grant operator status
+/deop <user> — remove operator status
+/voice <user> — grant voice
+/devoice <user> — remove voice
+/mode [+/-flags] — view or set room modes
+/register — register the room
+/unregister — unregister the room
+/invite add|del|list [user] — manage invites
+/nick <name> — change your nickname
+/list — list public rooms"""
+        addMessage(room, ChatMessage(
+            nick = null,
+            body = helpText,
+            src = null,
+            isNotice = true,
+        ))
     }
 
     fun setCurrentRoom(room: String?) {
@@ -447,17 +507,24 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleRrcEvent(event: RrcEvent) {
         when (event) {
             is RrcEvent.Welcome -> {
+                Log.d(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.ara.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
                 requestRoomList()
             }
 
             is RrcEvent.Joined -> {
+                Log.d(TAG, "Joined: room=${event.room} members=${event.members?.size}")
                 val rooms = _joinedRooms.value.toMutableSet()
                 rooms.add(event.room)
                 _joinedRooms.value = rooms
                 if (_currentRoom.value == null) {
                     _currentRoom.value = event.room
+                }
+                if (event.members != null) {
+                    val counts = _roomMemberCounts.value.toMutableMap()
+                    counts[event.room] = event.members.size
+                    _roomMemberCounts.value = counts
                 }
                 addMessage(event.room, ChatMessage(
                     nick = null,
@@ -465,6 +532,12 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                     src = null,
                     isNotice = true,
                 ))
+                // Auto-request /who after joining
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        rrcClient?.sendCommand("/who ${event.room}", room = event.room)
+                    } catch (_: Exception) {}
+                }
             }
 
             is RrcEvent.Parted -> {
@@ -496,6 +569,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             is RrcEvent.NoticeReceived -> {
+                Log.d(TAG, "NoticeReceived: room=${event.room} body='${event.body}'")
                 if (event.room == null) {
                     if (event.body.startsWith("Registered public rooms:")) {
                         val rooms = event.body.lines().drop(1).mapNotNull { line ->
@@ -514,6 +588,11 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                         return
                     }
                 }
+                // Parse topic notices
+                parseTopicNotice(event.body)
+                // Parse /who response for member count
+                parseMembersNotice(event.body)
+
                 val room = event.room ?: _currentRoom.value ?: return
                 addMessage(room, ChatMessage(
                     nick = null,
@@ -533,16 +612,90 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 ))
             }
 
+            is RrcEvent.MemberJoined -> {
+                val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
+                addMessage(event.room, ChatMessage(
+                    nick = null,
+                    body = "$shortHash joined",
+                    src = null,
+                    isNotice = true,
+                ))
+                val counts = _roomMemberCounts.value.toMutableMap()
+                counts[event.room] = (counts[event.room] ?: 0) + 1
+                _roomMemberCounts.value = counts
+            }
+
+            is RrcEvent.MemberParted -> {
+                val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
+                addMessage(event.room, ChatMessage(
+                    nick = null,
+                    body = "$shortHash left",
+                    src = null,
+                    isNotice = true,
+                ))
+                val counts = _roomMemberCounts.value.toMutableMap()
+                val current = counts[event.room] ?: 0
+                if (current > 0) counts[event.room] = current - 1
+                _roomMemberCounts.value = counts
+            }
+
             is RrcEvent.Disconnected -> {
                 _clientState.value = tech.torlando.ara.rrc.ClientState.DISCONNECTED
                 _connectedHubName.value = null
                 _joinedRooms.value = emptySet()
                 _availableRooms.value = emptyList()
+                _roomTopics.value = emptyMap()
+                _roomMemberCounts.value = emptyMap()
             }
 
             is RrcEvent.ConnectionFailed -> {
                 _clientState.value = tech.torlando.ara.rrc.ClientState.DISCONNECTED
             }
+        }
+    }
+
+    private fun parseTopicNotice(body: String) {
+        // "topic for {room}: {text}" or "topic for {room}: (none)"
+        val topicFor = Regex("""^topic for (\S+): (.+)$""")
+        topicFor.find(body)?.let { match ->
+            val room = match.groupValues[1]
+            val text = match.groupValues[2]
+            val topics = _roomTopics.value.toMutableMap()
+            topics[room] = if (text == "(none)") null else text
+            _roomTopics.value = topics
+            return
+        }
+        // "topic for {room} is now: {text}" or "...is now: (cleared)"
+        val topicNow = Regex("""^topic for (\S+) is now: (.+)$""")
+        topicNow.find(body)?.let { match ->
+            val room = match.groupValues[1]
+            val text = match.groupValues[2]
+            val topics = _roomTopics.value.toMutableMap()
+            topics[room] = if (text == "(cleared)") null else text
+            _roomTopics.value = topics
+            return
+        }
+        // "room {room}: registered; mode=...; topic=..."
+        val roomInfo = Regex("""^room (\S+):.*topic=(.+)$""")
+        roomInfo.find(body)?.let { match ->
+            val room = match.groupValues[1]
+            val text = match.groupValues[2].trim()
+            val topics = _roomTopics.value.toMutableMap()
+            topics[room] = text.ifEmpty { null }
+            _roomTopics.value = topics
+        }
+    }
+
+    private fun parseMembersNotice(body: String) {
+        // "members in {room}: nick1 (hash1), nick2 (hash2)"
+        val membersIn = Regex("""^members in (\S+): (.+)$""")
+        membersIn.find(body)?.let { match ->
+            val room = match.groupValues[1]
+            val memberList = match.groupValues[2]
+            val count = memberList.split(",").size
+            val counts = _roomMemberCounts.value.toMutableMap()
+            counts[room] = count
+            _roomMemberCounts.value = counts
         }
     }
 
