@@ -206,6 +206,12 @@ class RrcClient(
         send(env)
     }
 
+    fun sendCommand(text: String) {
+        require(text.isNotBlank()) { "Command cannot be empty" }
+        val env = RrcEnvelope.make(T_MSG, src = identity.hash, body = text, nick = nickname)
+        send(env)
+    }
+
     fun ping() {
         send(RrcEnvelope.make(T_PING, src = identity.hash))
     }

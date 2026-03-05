@@ -46,8 +46,11 @@ fun RoomListScreen(
     val unreadCounts by viewModel.unreadCounts.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
     val connectedHub by viewModel.connectedHubName.collectAsState()
+    val availableRooms by viewModel.availableRooms.collectAsState()
     var showJoinDialog by remember { mutableStateOf(false) }
     var roomNameInput by remember { mutableStateOf("") }
+
+    val filteredAvailable = availableRooms.filter { it.name !in joinedRooms }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -75,7 +78,7 @@ fun RoomListScreen(
             }
         },
     ) { paddingValues ->
-        if (joinedRooms.isEmpty()) {
+        if (joinedRooms.isEmpty() && filteredAvailable.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -99,27 +102,69 @@ fun RoomListScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(joinedRooms.toList().sorted()) { room ->
-                    val unread = unreadCounts[room] ?: 0
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clickable { onNavigateToChat(room) },
-                    ) {
-                        Row(
+                if (joinedRooms.isNotEmpty()) {
+                    items(joinedRooms.toList().sorted()) { room ->
+                        val unread = unreadCounts[room] ?: 0
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .clickable { onNavigateToChat(room) },
                         ) {
-                            Text(
-                                text = "#$room",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            if (unread > 0) {
-                                Badge { Text("$unread") }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "#$room",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (unread > 0) {
+                                    Badge { Text("$unread") }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (filteredAvailable.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Available Rooms",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                start = 16.dp, end = 16.dp,
+                                top = if (joinedRooms.isNotEmpty()) 16.dp else 8.dp,
+                                bottom = 4.dp,
+                            ),
+                        )
+                    }
+                    items(filteredAvailable) { room ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .clickable { viewModel.joinRoom(room.name) },
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                            ) {
+                                Text(
+                                    text = "#${room.name}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (room.topic != null) {
+                                    Text(
+                                        text = room.topic,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }

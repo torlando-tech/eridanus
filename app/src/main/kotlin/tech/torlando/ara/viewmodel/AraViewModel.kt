@@ -41,6 +41,8 @@ data class DiscoveredHub(
     val hexHash: String get() = hash.joinToString("") { "%02x".format(it) }
 }
 
+data class AvailableRoom(val name: String, val topic: String?)
+
 data class ChatMessage(
     val nick: String?,
     val body: String,
@@ -102,6 +104,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _unreadCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unreadCounts: StateFlow<Map<String, Int>> = _unreadCounts
+
+    private val _availableRooms = MutableStateFlow<List<AvailableRoom>>(emptyList())
+    val availableRooms: StateFlow<List<AvailableRoom>> = _availableRooms
 
     // Hub browser (persisted via Room)
     val discoveredHubs: StateFlow<List<DiscoveredHub>> = hubDao.observeAll()
@@ -275,6 +280,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _currentRoom.value = null
             _messages.value = emptyMap()
             _unreadCounts.value = emptyMap()
+            _availableRooms.value = emptyList()
         }
     }
 
@@ -315,6 +321,16 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             val counts = _unreadCounts.value.toMutableMap()
             counts.remove(room)
             _unreadCounts.value = counts
+        }
+    }
+
+    fun requestRoomList() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                rrcClient?.sendCommand("/list")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to request room list", e)
+            }
         }
     }
 
@@ -433,6 +449,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             is RrcEvent.Welcome -> {
                 _clientState.value = tech.torlando.ara.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
+                requestRoomList()
             }
 
             is RrcEvent.Joined -> {
@@ -479,6 +496,24 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             is RrcEvent.NoticeReceived -> {
+                if (event.room == null) {
+                    if (event.body.startsWith("Registered public rooms:")) {
+                        val rooms = event.body.lines().drop(1).mapNotNull { line ->
+                            val trimmed = line.trim()
+                            if (trimmed.isEmpty()) return@mapNotNull null
+                            val parts = trimmed.split(" - ", limit = 2)
+                            AvailableRoom(
+                                name = parts[0].trim(),
+                                topic = parts.getOrNull(1)?.trim(),
+                            )
+                        }
+                        _availableRooms.value = rooms
+                        return
+                    } else if (event.body == "No public rooms registered") {
+                        _availableRooms.value = emptyList()
+                        return
+                    }
+                }
                 val room = event.room ?: _currentRoom.value ?: return
                 addMessage(room, ChatMessage(
                     nick = null,
@@ -502,6 +537,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 _clientState.value = tech.torlando.ara.rrc.ClientState.DISCONNECTED
                 _connectedHubName.value = null
                 _joinedRooms.value = emptySet()
+                _availableRooms.value = emptyList()
             }
 
             is RrcEvent.ConnectionFailed -> {
