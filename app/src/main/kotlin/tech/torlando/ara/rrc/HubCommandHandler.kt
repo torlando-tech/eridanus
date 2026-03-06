@@ -93,7 +93,7 @@ class HubCommandHandler(
             }
         }
         val memberStr = if (members.isNotEmpty()) members.joinToString(", ") else "(none)"
-        hub.sendNotice(session.link, null, "members in $targetRoom: $memberStr")
+        hub.sendNotice(session.link, targetRoom, "members in $targetRoom: $memberStr")
         return true
     }
 
