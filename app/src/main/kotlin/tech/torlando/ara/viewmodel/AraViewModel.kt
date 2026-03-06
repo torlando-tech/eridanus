@@ -110,6 +110,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
     private val _availableRooms = MutableStateFlow<List<AvailableRoom>>(emptyList())
     val availableRooms: StateFlow<List<AvailableRoom>> = _availableRooms
 
+    private val _hubGreetingMessage = MutableStateFlow<String?>(null)
+    val hubGreetingMessage: StateFlow<String?> = _hubGreetingMessage
+
     private val _roomTopics = MutableStateFlow<Map<String, String?>>(emptyMap())
     val roomTopics: StateFlow<Map<String, String?>> = _roomTopics
 
@@ -311,6 +314,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _roomTopics.value = emptyMap()
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
+            _hubGreetingMessage.value = null
         }
     }
 
@@ -653,6 +657,10 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                     } else if (event.body == "No public rooms registered") {
                         _availableRooms.value = emptyList()
                         return
+                    } else {
+                        // Roomless notice that isn't /list — treat as hub greeting
+                        _hubGreetingMessage.value = event.body
+                        return
                     }
                 }
                 // Parse topic notices
@@ -714,6 +722,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 _roomTopics.value = emptyMap()
                 _roomMemberCounts.value = emptyMap()
                 _roomMemberList.value = emptyMap()
+                _hubGreetingMessage.value = null
             }
 
             is RrcEvent.ConnectionFailed -> {

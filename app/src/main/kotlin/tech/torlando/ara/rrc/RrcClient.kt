@@ -8,7 +8,9 @@ import network.reticulum.common.DestinationType
 import network.reticulum.destination.Destination
 import network.reticulum.identity.Identity
 import network.reticulum.link.Link
+import network.reticulum.resource.Resource
 import network.reticulum.transport.Transport
+import java.security.MessageDigest
 import tech.torlando.ara.rrc.RrcConstants.B_HELLO_CAPS
 import tech.torlando.ara.rrc.RrcConstants.B_HELLO_NAME
 import tech.torlando.ara.rrc.RrcConstants.B_HELLO_VER
@@ -34,7 +36,14 @@ import tech.torlando.ara.rrc.RrcConstants.T_PART
 import tech.torlando.ara.rrc.RrcConstants.T_PARTED
 import tech.torlando.ara.rrc.RrcConstants.T_PING
 import tech.torlando.ara.rrc.RrcConstants.T_PONG
+import tech.torlando.ara.rrc.RrcConstants.T_RESOURCE_ENVELOPE
 import tech.torlando.ara.rrc.RrcConstants.T_WELCOME
+import tech.torlando.ara.rrc.RrcConstants.B_RES_ID
+import tech.torlando.ara.rrc.RrcConstants.B_RES_KIND
+import tech.torlando.ara.rrc.RrcConstants.B_RES_SIZE
+import tech.torlando.ara.rrc.RrcConstants.B_RES_SHA256
+import tech.torlando.ara.rrc.RrcConstants.B_RES_ENCODING
+import tech.torlando.ara.rrc.RrcConstants.CAP_RESOURCE_ENVELOPE
 
 sealed class RrcEvent {
     data class Welcome(val hubName: String?, val env: Map<Int, Any?>) : RrcEvent()
@@ -43,6 +52,8 @@ sealed class RrcEvent {
     data class ErrorReceived(val room: String?, val text: String) : RrcEvent()
     data class Joined(val room: String, val members: List<ByteArray>?) : RrcEvent()
     data class Parted(val room: String) : RrcEvent()
+    data class MemberJoined(val room: String, val memberHash: ByteArray) : RrcEvent()
+    data class MemberParted(val room: String, val memberHash: ByteArray) : RrcEvent()
     data object Disconnected : RrcEvent()
     data class ConnectionFailed(val reason: String) : RrcEvent()
 }
@@ -53,6 +64,14 @@ enum class ClientState {
     AWAITING_WELCOME,
     ACTIVE,
 }
+
+private data class PendingResource(
+    val resId: ByteArray,
+    val kind: String,
+    val size: Int,
+    val sha256: ByteArray?,
+    val encoding: String?,
+)
 
 class RrcClient(
     private val identity: Identity,
@@ -66,6 +85,7 @@ class RrcClient(
 
     private var link: Link? = null
     private val _joinedRooms = mutableSetOf<String>()
+    private val _pendingResources = mutableMapOf<String, PendingResource>()
     val joinedRooms: Set<String> get() = _joinedRooms.toSet()
 
     var state: ClientState = ClientState.DISCONNECTED
@@ -143,6 +163,7 @@ class RrcClient(
                         _events.tryEmit(RrcEvent.ConnectionFailed("Failed to identify: ${e.message}"))
                         return@create
                     }
+                    setupResourceCallbacks(establishedLink)
                     state = ClientState.AWAITING_WELCOME
                     sendHello(establishedLink)
                 },
@@ -150,6 +171,7 @@ class RrcClient(
                     Log.d(TAG, "Link closed")
                     state = ClientState.DISCONNECTED
                     _joinedRooms.clear()
+                    _pendingResources.clear()
                     link = null
                     _events.tryEmit(RrcEvent.Disconnected)
                 },
@@ -176,7 +198,7 @@ class RrcClient(
         currentLink?.teardown()
     }
 
-    fun join(room: String) {
+    fun join(room: String, key: String? = null) {
         val r = room.trim().lowercase()
         require(r.isNotEmpty()) { "Room name cannot be empty" }
         require(r.toByteArray().size <= maxRoomNameBytes) {
@@ -185,7 +207,7 @@ class RrcClient(
         require(_joinedRooms.size < maxRoomsPerSession) {
             "Already in $maxRoomsPerSession rooms"
         }
-        send(RrcEnvelope.make(T_JOIN, src = identity.hash, room = r))
+        send(RrcEnvelope.make(T_JOIN, src = identity.hash, room = r, body = key))
     }
 
     fun part(room: String) {
@@ -206,9 +228,10 @@ class RrcClient(
         send(env)
     }
 
-    fun sendCommand(text: String) {
+    fun sendCommand(text: String, room: String? = null) {
         require(text.isNotBlank()) { "Command cannot be empty" }
-        val env = RrcEnvelope.make(T_MSG, src = identity.hash, body = text, nick = nickname)
+        Log.d(TAG, "sendCommand: text='$text' room=$room")
+        val env = RrcEnvelope.make(T_MSG, src = identity.hash, room = room, body = text, nick = nickname)
         send(env)
     }
 
@@ -217,14 +240,70 @@ class RrcClient(
     }
 
     private fun sendHello(targetLink: Link) {
+        val caps = mapOf<Int, Any?>(
+            CAP_RESOURCE_ENVELOPE to true,
+        )
         val helloBody = mapOf<Int, Any?>(
             B_HELLO_NAME to APP_NAME,
             B_HELLO_VER to APP_VERSION,
-            B_HELLO_CAPS to emptyMap<Int, Any?>(),
+            B_HELLO_CAPS to caps,
         )
         val env = RrcEnvelope.make(T_HELLO, src = identity.hash, body = helloBody, nick = nickname)
         val payload = RrcCodec.encode(env)
         targetLink.send(payload)
+    }
+
+    private fun setupResourceCallbacks(link: Link) {
+        link.setResourceStrategy(Link.ACCEPT_APP)
+        link.setResourceCallback { advertisement ->
+            // Accept if we have a pending expectation matching the request ID
+            val reqId = advertisement.requestId
+            if (reqId != null) {
+                val hexId = reqId.joinToString("") { "%02x".format(it) }
+                hexId in _pendingResources
+            } else {
+                // Accept unexpected resources too — server may send without envelope
+                true
+            }
+        }
+        link.callbacks.resourceConcluded = { resourceObj ->
+            val res = resourceObj as? Resource
+            if (res != null) {
+                onResourceConcluded(res)
+            }
+        }
+    }
+
+    private fun onResourceConcluded(resource: Resource) {
+        val data = resource.data ?: return
+        val reqId = resource.requestId
+        val hexId = reqId?.joinToString("") { "%02x".format(it) }
+        val pending = if (hexId != null) _pendingResources.remove(hexId) else null
+
+        if (pending != null) {
+            // Verify SHA256 if provided
+            if (pending.sha256 != null) {
+                val digest = MessageDigest.getInstance("SHA-256").digest(data)
+                if (!digest.contentEquals(pending.sha256)) {
+                    Log.w(TAG, "Resource SHA256 mismatch for $hexId")
+                    return
+                }
+            }
+            val text = data.toString(Charsets.UTF_8)
+            when (pending.kind) {
+                "notice", "motd" -> {
+                    _events.tryEmit(RrcEvent.NoticeReceived(null, text))
+                }
+                else -> {
+                    Log.d(TAG, "Received resource kind=${pending.kind}, size=${data.size}")
+                    _events.tryEmit(RrcEvent.NoticeReceived(null, text))
+                }
+            }
+        } else {
+            // No matching envelope — treat as notice
+            val text = data.toString(Charsets.UTF_8)
+            _events.tryEmit(RrcEvent.NoticeReceived(null, text))
+        }
     }
 
     private fun send(env: Map<Int, Any?>) {
@@ -245,6 +324,8 @@ class RrcClient(
         }
 
         val type = env[K_T] as? Int ?: return
+        val bodyPreview = env[K_BODY]?.let { b -> "${b::class.simpleName}: ${if (b is String) "'$b'" else b}" }
+        Log.d(TAG, "onPacket: type=$type room=${env[K_ROOM]} body=$bodyPreview")
 
         when (type) {
             T_WELCOME -> {
@@ -266,18 +347,35 @@ class RrcClient(
 
             T_JOINED -> {
                 val room = (env[K_ROOM] as? String)?.trim()?.lowercase() ?: return
-                _joinedRooms.add(room)
                 val body = env[K_BODY]
                 val members = if (body is List<*>) {
                     body.filterIsInstance<ByteArray>()
                 } else null
-                _events.tryEmit(RrcEvent.Joined(room, members))
+                if (room in _joinedRooms) {
+                    // Already in this room — someone else joined
+                    val joinerHash = members?.firstOrNull()
+                    if (joinerHash != null) {
+                        _events.tryEmit(RrcEvent.MemberJoined(room, joinerHash))
+                    }
+                } else {
+                    _joinedRooms.add(room)
+                    _events.tryEmit(RrcEvent.Joined(room, members))
+                }
             }
 
             T_PARTED -> {
                 val room = (env[K_ROOM] as? String)?.trim()?.lowercase() ?: return
-                _joinedRooms.remove(room)
-                _events.tryEmit(RrcEvent.Parted(room))
+                val body = env[K_BODY]
+                val partedHash = if (body is ByteArray) body
+                    else if (body is List<*>) (body.firstOrNull() as? ByteArray)
+                    else null
+                val isSelf = partedHash != null && partedHash.contentEquals(identity.hash)
+                if (isSelf || partedHash == null) {
+                    _joinedRooms.remove(room)
+                    _events.tryEmit(RrcEvent.Parted(room))
+                } else {
+                    _events.tryEmit(RrcEvent.MemberParted(room, partedHash))
+                }
             }
 
             T_MSG -> {
@@ -311,6 +409,20 @@ class RrcClient(
 
             T_PONG -> {
                 // Could track latency here
+            }
+
+            T_RESOURCE_ENVELOPE -> {
+                val body = env[K_BODY]
+                if (body is Map<*, *>) {
+                    val resId = body[B_RES_ID] as? ByteArray ?: return
+                    val kind = body[B_RES_KIND] as? String ?: "unknown"
+                    val size = (body[B_RES_SIZE] as? Number)?.toInt() ?: 0
+                    val sha256 = body[B_RES_SHA256] as? ByteArray
+                    val encoding = body[B_RES_ENCODING] as? String
+                    val hexId = resId.joinToString("") { "%02x".format(it) }
+                    _pendingResources[hexId] = PendingResource(resId, kind, size, sha256, encoding)
+                    Log.d(TAG, "Resource envelope: id=$hexId kind=$kind size=$size")
+                }
             }
         }
     }

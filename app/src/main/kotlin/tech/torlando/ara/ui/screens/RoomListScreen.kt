@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -47,8 +48,10 @@ fun RoomListScreen(
     val clientState by viewModel.clientState.collectAsState()
     val connectedHub by viewModel.connectedHubName.collectAsState()
     val availableRooms by viewModel.availableRooms.collectAsState()
+    val greetingMessage by viewModel.hubGreetingMessage.collectAsState()
     var showJoinDialog by remember { mutableStateOf(false) }
     var roomNameInput by remember { mutableStateOf("") }
+    var roomKeyInput by remember { mutableStateOf("") }
 
     val filteredAvailable = availableRooms.filter { it.name !in joinedRooms }
 
@@ -78,7 +81,7 @@ fun RoomListScreen(
             }
         },
     ) { paddingValues ->
-        if (joinedRooms.isEmpty() && filteredAvailable.isEmpty()) {
+        if (joinedRooms.isEmpty() && filteredAvailable.isEmpty() && greetingMessage == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -102,6 +105,25 @@ fun RoomListScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                if (greetingMessage != null) {
+                    item(key = "greeting") {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            ),
+                        ) {
+                            Text(
+                                text = greetingMessage!!,
+                                modifier = Modifier.padding(16.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
                 if (joinedRooms.isNotEmpty()) {
                     items(joinedRooms.toList().sorted()) { room ->
                         val unread = unreadCounts[room] ?: 0
@@ -177,23 +199,36 @@ fun RoomListScreen(
                 onDismissRequest = {
                     showJoinDialog = false
                     roomNameInput = ""
+                    roomKeyInput = ""
                 },
                 title = { Text("Join Room") },
                 text = {
-                    OutlinedTextField(
-                        value = roomNameInput,
-                        onValueChange = { roomNameInput = it },
-                        label = { Text("Room name") },
-                        singleLine = true,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = roomNameInput,
+                            onValueChange = { roomNameInput = it },
+                            label = { Text("Room name") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = roomKeyInput,
+                            onValueChange = { roomKeyInput = it },
+                            label = { Text("Key (optional)") },
+                            singleLine = true,
+                        )
+                    }
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             if (roomNameInput.isNotBlank()) {
-                                viewModel.joinRoom(roomNameInput.trim())
+                                viewModel.joinRoom(
+                                    roomNameInput.trim(),
+                                    key = roomKeyInput.trim().ifEmpty { null },
+                                )
                                 showJoinDialog = false
                                 roomNameInput = ""
+                                roomKeyInput = ""
                             }
                         },
                     ) {
@@ -204,6 +239,7 @@ fun RoomListScreen(
                     TextButton(onClick = {
                         showJoinDialog = false
                         roomNameInput = ""
+                        roomKeyInput = ""
                     }) {
                         Text("Cancel")
                     }
