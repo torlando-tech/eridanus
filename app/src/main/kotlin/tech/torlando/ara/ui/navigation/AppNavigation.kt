@@ -60,6 +60,7 @@ fun AppNavigation(viewModel: AraViewModel) {
     val shouldShowBottomNav = currentDestination?.route !in hideBottomNavScreens
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             if (shouldShowBottomNav) {
                 NavigationBar {
