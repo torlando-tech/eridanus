@@ -18,4 +18,4 @@ rootProject.name = "ara"
 
 include(":app")
 
-includeBuild("../reticulum-kt")
+includeBuild("reticulum-kt")

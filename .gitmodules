@@ -1,0 +1,3 @@
+[submodule "reticulum-kt"]
+	path = reticulum-kt
+	url = git@github-public:torlando-tech/reticulum-kt.git
