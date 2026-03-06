@@ -75,7 +75,7 @@ private val COMMANDS = listOf(
     CommandSuggestion("/deop", "/deop <user>", "Remove operator status"),
     CommandSuggestion("/voice", "/voice <user>", "Grant voice"),
     CommandSuggestion("/devoice", "/devoice <user>", "Remove voice"),
-    CommandSuggestion("/mode", "/mode [+/-flags]", "View or set room modes"),
+    CommandSuggestion("/mode", "/mode [+/-flags] [user]", "View or set room modes"),
     CommandSuggestion("/register", "/register", "Register the room"),
     CommandSuggestion("/unregister", "/unregister", "Unregister the room"),
     CommandSuggestion("/invite", "/invite add|del|list [user]", "Manage invites"),

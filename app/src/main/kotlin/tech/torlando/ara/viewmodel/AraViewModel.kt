@@ -22,6 +22,7 @@ import network.reticulum.interfaces.local.LocalClientInterface
 import network.reticulum.transport.AnnounceHandler
 import network.reticulum.transport.Transport
 import tech.torlando.ara.data.DarkModeOption
+import tech.torlando.ara.data.DefaultRoomConfig
 import tech.torlando.ara.data.IdentityStore
 import tech.torlando.ara.data.PreferencesManager
 import tech.torlando.ara.data.db.AraDatabase
@@ -149,16 +150,8 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, SharingStarted.Eagerly, ""
     )
 
-    val hubDefaultRoom: StateFlow<String> = prefs.hubDefaultRoom.stateIn(
-        viewModelScope, SharingStarted.Eagerly, ""
-    )
-
-    val hubDefaultTopic: StateFlow<String> = prefs.hubDefaultTopic.stateIn(
-        viewModelScope, SharingStarted.Eagerly, ""
-    )
-
-    val hubDefaultModes: StateFlow<String> = prefs.hubDefaultModes.stateIn(
-        viewModelScope, SharingStarted.Eagerly, "+nt"
+    val hubDefaultRooms: StateFlow<List<DefaultRoomConfig>> = prefs.hubDefaultRooms.stateIn(
+        viewModelScope, SharingStarted.Eagerly, emptyList()
     )
 
     // Identities
@@ -471,25 +464,8 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setHubDefaultRoom(room: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultRoom(room)
-            rrcHub?.defaultRoom = room.trim().lowercase().ifEmpty { null }
-        }
-    }
-
-    fun setHubDefaultTopic(topic: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultTopic(topic)
-            rrcHub?.defaultTopic = topic.ifEmpty { null }
-        }
-    }
-
-    fun setHubDefaultModes(modes: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultModes(modes)
-            rrcHub?.defaultModes = modes.ifEmpty { null }
-        }
+    fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
+        viewModelScope.launch { prefs.setHubDefaultRooms(rooms) }
     }
 
     fun connectToOwnHub() {
@@ -550,10 +526,8 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val hub = RrcHub(id, prefs.getHubName())
                 hub.greeting = prefs.getHubGreeting().ifEmpty { null }
-                val defRoom = prefs.getHubDefaultRoom().trim().lowercase()
-                hub.defaultRoom = defRoom.ifEmpty { null }
-                hub.defaultTopic = prefs.getHubDefaultTopic().ifEmpty { null }
-                hub.defaultModes = prefs.getHubDefaultModes().ifEmpty { null }
+                hub.defaultRooms = prefs.getHubDefaultRooms()
+                    .filter { it.name.isNotBlank() }
                 // Hub owner is always a server operator
                 clientIdentity?.let { hub.roomManager.addServerOp(it.hash) }
                 rrcHub = hub

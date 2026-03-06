@@ -306,7 +306,7 @@ class HubCommandHandler(
 
     private fun handleMode(session: HubSession, parts: List<String>, envelopeRoom: String?, peerHash: ByteArray): Boolean {
         if (parts.size < 3) {
-            hub.sendNotice(session.link, null, "usage: /mode <room> (+m|-m|+i|-i|+t|-t|+n|-n|+p|-p|+k|-k) [key]")
+            hub.sendNotice(session.link, null, "usage: /mode <room> (+m|-m|+i|-i|+t|-t|+n|-n|+p|-p|+k|-k) [key] | /mode <room> (+o|-o|+v|-v) <nick|hash>")
             return true
         }
         val r = parts[1].trim().lowercase()
@@ -346,8 +346,41 @@ class HubCommandHandler(
                 hub.sendNotice(session.link, envelopeRoom, "use /register or /unregister to change +r")
                 return true
             }
+            "+o", "-o", "+v", "-v" -> {
+                if (parts.size < 4) {
+                    hub.sendNotice(session.link, envelopeRoom, "usage: /mode <room> $flag <nick|hash>")
+                    return true
+                }
+                val (targetLink, err) = resolveTarget(parts[3], r)
+                if (targetLink == null) {
+                    hub.sendNotice(session.link, envelopeRoom, err)
+                    return true
+                }
+                val targetSession = hub.getSession(targetLink) ?: return true
+                val targetHash = targetSession.peerHash ?: return true
+
+                when (flag) {
+                    "+o" -> st.ops.add(targetHash.asKey())
+                    "-o" -> {
+                        val founder = st.founder
+                        if (founder != null && founder.contentEquals(targetHash)) {
+                            hub.sendNotice(session.link, envelopeRoom, "cannot deop founder")
+                            return true
+                        }
+                        st.ops.remove(targetHash.asKey())
+                    }
+                    "+v" -> st.voiced.add(targetHash.asKey())
+                    "-v" -> st.voiced.remove(targetHash.asKey())
+                }
+
+                val shortHash = targetHash.take(6).joinToString("") { "%02x".format(it) }
+                for (memberLink in roomManager.getMembers(r)) {
+                    hub.sendNotice(memberLink, r, "mode for $r is now: $flag $shortHash")
+                }
+                return true
+            }
             else -> {
-                hub.sendNotice(session.link, envelopeRoom, "supported modes: +m -m +i -i +k -k +t -t +n -n +p -p +r -r")
+                hub.sendNotice(session.link, envelopeRoom, "supported modes: +m -m +i -i +k -k +t -t +n -n +p -p +r -r +o -o +v -v")
                 return true
             }
         }
