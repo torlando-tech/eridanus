@@ -30,6 +30,7 @@ import tech.torlando.ara.rrc.RrcClient
 import tech.torlando.ara.rrc.RrcConstants
 import tech.torlando.ara.rrc.RrcEvent
 import tech.torlando.ara.rrc.RrcHub
+import tech.torlando.ara.service.AraConnectionService
 import tech.torlando.ara.ui.theme.PresetTheme
 import java.io.ByteArrayInputStream
 
@@ -281,6 +282,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         val id = clientIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                AraConnectionService.start(getApplication())
                 val client = RrcClient(id, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.ara.rrc.ClientState.CONNECTING
@@ -315,6 +317,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
             _hubGreetingMessage.value = null
+            if (!_hubRunning.value) {
+                AraConnectionService.stop(getApplication())
+            }
         }
     }
 
@@ -496,6 +501,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(TAG, "connectToOwnHub: hash=${hash.joinToString("") { "%02x".format(it) }}")
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                AraConnectionService.start(getApplication())
                 val client = RrcClient(clientId, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.ara.rrc.ClientState.CONNECTING
@@ -535,12 +541,12 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         val id = hubIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val hub = RrcHub(id, hubName.value)
-                hub.greeting = hubGreeting.value.ifEmpty { null }
-                val defRoom = hubDefaultRoom.value.trim().lowercase()
+                val hub = RrcHub(id, prefs.getHubName())
+                hub.greeting = prefs.getHubGreeting().ifEmpty { null }
+                val defRoom = prefs.getHubDefaultRoom().trim().lowercase()
                 hub.defaultRoom = defRoom.ifEmpty { null }
-                hub.defaultTopic = hubDefaultTopic.value.ifEmpty { null }
-                hub.defaultModes = hubDefaultModes.value.ifEmpty { null }
+                hub.defaultTopic = prefs.getHubDefaultTopic().ifEmpty { null }
+                hub.defaultModes = prefs.getHubDefaultModes().ifEmpty { null }
                 // Hub owner is always a server operator
                 clientIdentity?.let { hub.roomManager.addServerOp(it.hash) }
                 rrcHub = hub
@@ -554,6 +560,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 hub.start()
                 _hubRunning.value = true
                 _hubDestHash.value = hub.destHash
+                AraConnectionService.start(getApplication())
 
                 val interval = announceInterval.value
                 if (interval > 0) {
@@ -572,6 +579,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _hubRunning.value = false
             _hubClients.value = 0
             _hubDestHash.value = null
+            if (_clientState.value == tech.torlando.ara.rrc.ClientState.DISCONNECTED) {
+                AraConnectionService.stop(getApplication())
+            }
         }
     }
 
@@ -653,9 +663,15 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         _availableRooms.value = rooms
+                        _currentRoom.value?.let { displayRoom ->
+                            addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
+                        }
                         return
                     } else if (event.body == "No public rooms registered") {
                         _availableRooms.value = emptyList()
+                        _currentRoom.value?.let { displayRoom ->
+                            addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
+                        }
                         return
                     } else {
                         // Roomless notice that isn't /list — treat as hub greeting
@@ -723,6 +739,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 _roomMemberCounts.value = emptyMap()
                 _roomMemberList.value = emptyMap()
                 _hubGreetingMessage.value = null
+                if (!_hubRunning.value) {
+                    AraConnectionService.stop(getApplication())
+                }
             }
 
             is RrcEvent.ConnectionFailed -> {
@@ -812,7 +831,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        rrcClient?.disconnect()
-        rrcHub?.stop()
+        // Don't disconnect/stop here — the foreground service keeps the process alive.
+        // If the service is not running (user manually disconnected), these are already null.
     }
 }

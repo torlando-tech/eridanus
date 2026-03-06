@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import tech.torlando.ara.ui.theme.PresetTheme
 
@@ -106,6 +107,12 @@ class PreferencesManager(private val context: Context) {
     suspend fun setHubDefaultModes(modes: String) {
         context.dataStore.edit { it[KEY_HUB_DEFAULT_MODES] = modes }
     }
+
+    suspend fun getHubName(): String = context.dataStore.data.first()[KEY_HUB_NAME] ?: "Ara Hub"
+    suspend fun getHubGreeting(): String = context.dataStore.data.first()[KEY_HUB_GREETING] ?: ""
+    suspend fun getHubDefaultRoom(): String = context.dataStore.data.first()[KEY_HUB_DEFAULT_ROOM] ?: ""
+    suspend fun getHubDefaultTopic(): String = context.dataStore.data.first()[KEY_HUB_DEFAULT_TOPIC] ?: ""
+    suspend fun getHubDefaultModes(): String = context.dataStore.data.first()[KEY_HUB_DEFAULT_MODES] ?: "+nt"
 }
 
 enum class DarkModeOption(val displayName: String) {

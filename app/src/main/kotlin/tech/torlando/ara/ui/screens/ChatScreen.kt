@@ -1,5 +1,6 @@
 package tech.torlando.ara.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,8 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import tech.torlando.ara.viewmodel.AraViewModel
 import tech.torlando.ara.viewmodel.ChatMessage
@@ -48,6 +57,26 @@ import tech.torlando.ara.viewmodel.RoomMember
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private data class CommandSuggestion(val command: String, val syntax: String, val description: String)
+
+private val COMMANDS = listOf(
+    CommandSuggestion("/help", "/help", "Show available commands"),
+    CommandSuggestion("/list", "/list", "List public rooms"),
+    CommandSuggestion("/topic", "/topic [text]", "View or set room topic"),
+    CommandSuggestion("/who", "/who", "List room members"),
+    CommandSuggestion("/nick", "/nick <name>", "Change your nickname"),
+    CommandSuggestion("/kick", "/kick <user>", "Kick a user"),
+    CommandSuggestion("/ban", "/ban add|del|list [user]", "Manage bans"),
+    CommandSuggestion("/op", "/op <user>", "Grant operator status"),
+    CommandSuggestion("/deop", "/deop <user>", "Remove operator status"),
+    CommandSuggestion("/voice", "/voice <user>", "Grant voice"),
+    CommandSuggestion("/devoice", "/devoice <user>", "Remove voice"),
+    CommandSuggestion("/mode", "/mode [+/-flags]", "View or set room modes"),
+    CommandSuggestion("/register", "/register", "Register the room"),
+    CommandSuggestion("/unregister", "/unregister", "Unregister the room"),
+    CommandSuggestion("/invite", "/invite add|del|list [user]", "Manage invites"),
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,7 +93,7 @@ fun ChatScreen(
     val topic = currentRoom?.let { roomTopics[it] }
     val memberCount = currentRoom?.let { roomMemberCounts[it] }
     val members = currentRoom?.let { roomMemberList[it] } ?: emptyList()
-    var inputText by remember { mutableStateOf("") }
+    var inputField by remember { mutableStateOf(TextFieldValue()) }
     val listState = rememberLazyListState()
     var showMemberSheet by remember { mutableStateOf(false) }
 
@@ -116,6 +145,25 @@ fun ChatScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Leave Room") },
+                            onClick = {
+                                menuExpanded = false
+                                currentRoom?.let { viewModel.partRoom(it); onNavigateBack() }
+                            },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null) },
+                        )
+                    }
+                },
             )
         },
     ) { paddingValues ->
@@ -142,6 +190,45 @@ fun ChatScreen(
                 }
             }
 
+            val inputText = inputField.text
+            val showSuggestions = inputText.startsWith("/") && !inputText.contains(" ")
+            val filteredCommands = if (showSuggestions) {
+                COMMANDS.filter { it.command.startsWith(inputText.lowercase()) }
+            } else emptyList()
+
+            AnimatedVisibility(visible = filteredCommands.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                ) {
+                    Column {
+                        filteredCommands.forEach { suggestion ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val text = suggestion.command + " "
+                                        inputField = TextFieldValue(text, TextRange(text.length))
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    suggestion.syntax,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    suggestion.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -150,8 +237,8 @@ fun ChatScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
+                    value = inputField,
+                    onValueChange = { inputField = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message #${currentRoom ?: ""}") },
                     singleLine = true,
@@ -160,7 +247,7 @@ fun ChatScreen(
                     onClick = {
                         if (inputText.isNotBlank()) {
                             viewModel.sendInput(inputText.trim())
-                            inputText = ""
+                            inputField = TextFieldValue()
                         }
                     },
                     enabled = inputText.isNotBlank(),
