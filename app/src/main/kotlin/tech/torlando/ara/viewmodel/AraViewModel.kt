@@ -141,6 +141,22 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, SharingStarted.Eagerly, 0
     )
 
+    val hubGreeting: StateFlow<String> = prefs.hubGreeting.stateIn(
+        viewModelScope, SharingStarted.Eagerly, ""
+    )
+
+    val hubDefaultRoom: StateFlow<String> = prefs.hubDefaultRoom.stateIn(
+        viewModelScope, SharingStarted.Eagerly, ""
+    )
+
+    val hubDefaultTopic: StateFlow<String> = prefs.hubDefaultTopic.stateIn(
+        viewModelScope, SharingStarted.Eagerly, ""
+    )
+
+    val hubDefaultModes: StateFlow<String> = prefs.hubDefaultModes.stateIn(
+        viewModelScope, SharingStarted.Eagerly, "+nt"
+    )
+
     // Identities
     private var hubIdentity: Identity? = null
     private var clientIdentity: Identity? = null
@@ -432,6 +448,34 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setHubGreeting(greeting: String) {
+        viewModelScope.launch {
+            prefs.setHubGreeting(greeting)
+            rrcHub?.greeting = greeting.ifEmpty { null }
+        }
+    }
+
+    fun setHubDefaultRoom(room: String) {
+        viewModelScope.launch {
+            prefs.setHubDefaultRoom(room)
+            rrcHub?.defaultRoom = room.trim().lowercase().ifEmpty { null }
+        }
+    }
+
+    fun setHubDefaultTopic(topic: String) {
+        viewModelScope.launch {
+            prefs.setHubDefaultTopic(topic)
+            rrcHub?.defaultTopic = topic.ifEmpty { null }
+        }
+    }
+
+    fun setHubDefaultModes(modes: String) {
+        viewModelScope.launch {
+            prefs.setHubDefaultModes(modes)
+            rrcHub?.defaultModes = modes.ifEmpty { null }
+        }
+    }
+
     fun connectToOwnHub() {
         val hash = _hubDestHash.value ?: run {
             Log.w(TAG, "connectToOwnHub: no hub dest hash")
@@ -488,6 +532,13 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val hub = RrcHub(id, hubName.value)
+                hub.greeting = hubGreeting.value.ifEmpty { null }
+                val defRoom = hubDefaultRoom.value.trim().lowercase()
+                hub.defaultRoom = defRoom.ifEmpty { null }
+                hub.defaultTopic = hubDefaultTopic.value.ifEmpty { null }
+                hub.defaultModes = hubDefaultModes.value.ifEmpty { null }
+                // Hub owner is always a server operator
+                clientIdentity?.let { hub.roomManager.addServerOp(it.hash) }
                 rrcHub = hub
 
                 launch {

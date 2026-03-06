@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -26,6 +28,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -45,8 +50,19 @@ fun HostScreen(viewModel: AraViewModel) {
     val hubDestHash by viewModel.hubDestHash.collectAsState()
     val announceInterval by viewModel.announceInterval.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
+    val hubGreeting by viewModel.hubGreeting.collectAsState()
+    val hubDefaultRoom by viewModel.hubDefaultRoom.collectAsState()
+    val hubDefaultTopic by viewModel.hubDefaultTopic.collectAsState()
+    val hubDefaultModes by viewModel.hubDefaultModes.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+
+    // Local text state to avoid cursor desync from async DataStore round-trip.
+    // By the time the user navigates here, DataStore values are already loaded.
+    var localHubName by remember { mutableStateOf(hubName) }
+    var localGreeting by remember { mutableStateOf(hubGreeting) }
+    var localDefaultRoom by remember { mutableStateOf(hubDefaultRoom) }
+    var localDefaultTopic by remember { mutableStateOf(hubDefaultTopic) }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -58,19 +74,19 @@ fun HostScreen(viewModel: AraViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            // Hub name + on/off
+            Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     OutlinedTextField(
-                        value = hubName,
-                        onValueChange = { viewModel.setHubName(it) },
+                        value = localHubName,
+                        onValueChange = { localHubName = it; viewModel.setHubName(it) },
                         label = { Text("Hub Name") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -104,10 +120,103 @@ fun HostScreen(viewModel: AraViewModel) {
                 }
             }
 
-            if (hubRunning) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
+            // Hub configuration
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    Text(
+                        text = "Hub Settings",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+
+                    OutlinedTextField(
+                        value = localGreeting,
+                        onValueChange = { localGreeting = it; viewModel.setHubGreeting(it) },
+                        label = { Text("Welcome Message") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 3,
+                        supportingText = { Text("Shown to clients when they connect") },
+                        enabled = !hubRunning,
+                    )
+
+                    OutlinedTextField(
+                        value = localDefaultRoom,
+                        onValueChange = { localDefaultRoom = it; viewModel.setHubDefaultRoom(it) },
+                        label = { Text("Default Room") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        supportingText = { Text("Pre-created and registered on hub start") },
+                        enabled = !hubRunning,
+                    )
+
+                    OutlinedTextField(
+                        value = localDefaultTopic,
+                        onValueChange = { localDefaultTopic = it; viewModel.setHubDefaultTopic(it) },
+                        label = { Text("Default Room Topic") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = !hubRunning,
+                    )
+
+                    Text(
+                        text = "Default Room Modes",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "These control who can send messages, join, or change the topic in the default room.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    data class ModeOption(val flag: String, val label: String, val description: String)
+                    val modeOptions = listOf(
+                        ModeOption("n", "No Outside Msgs (+n)", "Only room members can send messages"),
+                        ModeOption("t", "Ops-Only Topic (+t)", "Only operators can change the topic"),
+                        ModeOption("m", "Moderated (+m)", "Only approved users can speak (use /voice to approve)"),
+                        ModeOption("i", "Invite Only (+i)", "Users need an invite or operator status to join"),
+                        ModeOption("p", "Private (+p)", "Room is hidden from the public room list"),
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        for (mode in modeOptions) {
+                            val isSet = hubDefaultModes.contains(mode.flag)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FilterChip(
+                                    selected = isSet,
+                                    onClick = {
+                                        if (!hubRunning) {
+                                            val newModes = if (isSet) {
+                                                hubDefaultModes.replace(mode.flag, "")
+                                            } else {
+                                                hubDefaultModes + mode.flag
+                                            }
+                                            val flags = newModes.filter { it.isLetter() }
+                                            val sorted = flags.toSortedSet().joinToString("")
+                                            viewModel.setHubDefaultModes(if (sorted.isNotEmpty()) "+$sorted" else "")
+                                        }
+                                    },
+                                    label = { Text(mode.label) },
+                                    enabled = !hubRunning,
+                                )
+                                Text(
+                                    text = mode.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Hub status (when running)
+            if (hubRunning) {
+                Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -175,10 +284,8 @@ fun HostScreen(viewModel: AraViewModel) {
                 }
             }
 
-            // Announce interval selector (visible regardless of hub state)
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            // Announce interval selector
+            Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),

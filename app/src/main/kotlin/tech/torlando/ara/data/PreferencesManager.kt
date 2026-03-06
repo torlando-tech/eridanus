@@ -21,6 +21,10 @@ class PreferencesManager(private val context: Context) {
         private val KEY_NICKNAME = stringPreferencesKey("nickname")
         private val KEY_HUB_NAME = stringPreferencesKey("hub_name")
         private val KEY_ANNOUNCE_INTERVAL = intPreferencesKey("announce_interval")
+        private val KEY_HUB_GREETING = stringPreferencesKey("hub_greeting")
+        private val KEY_HUB_DEFAULT_ROOM = stringPreferencesKey("hub_default_room")
+        private val KEY_HUB_DEFAULT_TOPIC = stringPreferencesKey("hub_default_topic")
+        private val KEY_HUB_DEFAULT_MODES = stringPreferencesKey("hub_default_modes")
     }
 
     val theme: Flow<PresetTheme> = context.dataStore.data.map { prefs ->
@@ -51,6 +55,22 @@ class PreferencesManager(private val context: Context) {
         prefs[KEY_ANNOUNCE_INTERVAL] ?: 0
     }
 
+    val hubGreeting: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HUB_GREETING] ?: ""
+    }
+
+    val hubDefaultRoom: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HUB_DEFAULT_ROOM] ?: ""
+    }
+
+    val hubDefaultTopic: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HUB_DEFAULT_TOPIC] ?: ""
+    }
+
+    val hubDefaultModes: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HUB_DEFAULT_MODES] ?: "+nt"
+    }
+
     suspend fun setTheme(theme: PresetTheme) {
         context.dataStore.edit { it[KEY_THEME] = theme.name }
     }
@@ -69,6 +89,22 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setAnnounceInterval(seconds: Int) {
         context.dataStore.edit { it[KEY_ANNOUNCE_INTERVAL] = seconds }
+    }
+
+    suspend fun setHubGreeting(greeting: String) {
+        context.dataStore.edit { it[KEY_HUB_GREETING] = greeting }
+    }
+
+    suspend fun setHubDefaultRoom(room: String) {
+        context.dataStore.edit { it[KEY_HUB_DEFAULT_ROOM] = room }
+    }
+
+    suspend fun setHubDefaultTopic(topic: String) {
+        context.dataStore.edit { it[KEY_HUB_DEFAULT_TOPIC] = topic }
+    }
+
+    suspend fun setHubDefaultModes(modes: String) {
+        context.dataStore.edit { it[KEY_HUB_DEFAULT_MODES] = modes }
     }
 }
 

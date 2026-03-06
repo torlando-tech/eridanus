@@ -30,6 +30,14 @@ class HubRoomManager {
 
     private val roomState = mutableMapOf<String, HubRoomState>()
     private val roomMembers = mutableMapOf<String, MutableSet<Link>>()
+    private val serverOps = mutableSetOf<ByteArrayKey>()
+
+    fun addServerOp(hash: ByteArray) { serverOps.add(hash.asKey()) }
+
+    fun isServerOp(hash: ByteArray?): Boolean {
+        if (hash == null) return false
+        return hash.asKey() in serverOps
+    }
 
     fun getOrCreateState(room: String, founder: ByteArray? = null): HubRoomState {
         val existing = roomState[room]
@@ -77,6 +85,7 @@ class HubRoomManager {
 
     fun isOp(room: String, hash: ByteArray?): Boolean {
         if (hash == null) return false
+        if (isServerOp(hash)) return true
         val st = roomState[room] ?: return false
         val founder = st.founder
         if (founder != null && founder.contentEquals(hash)) return true

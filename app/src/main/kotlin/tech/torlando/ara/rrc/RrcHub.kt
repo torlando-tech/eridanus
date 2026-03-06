@@ -56,10 +56,17 @@ class RrcHub(
         private const val TAG = "RrcHub"
     }
 
+    // Hub configuration
+    var greeting: String? = null
+    var defaultRoom: String? = null
+    var defaultTopic: String? = null
+    var defaultModes: String? = null  // e.g. "+nt"
+
     private var destination: Destination? = null
     private val sessions = mutableMapOf<Link, HubSession>()
-    private val roomManager = HubRoomManager()
+    internal val roomManager = HubRoomManager()
     private val commandHandler = HubCommandHandler(this, roomManager)
+    private var defaultRoomInitialized = false
 
     private val _connectedClients = MutableStateFlow(0)
     val connectedClients: StateFlow<Int> = _connectedClients
@@ -100,6 +107,7 @@ class RrcHub(
 
         destination = dest
         running = true
+        initDefaultRoom()
         Log.i(TAG, "Hub started: $hubName (${dest.hexHash})")
     }
 
@@ -142,9 +150,41 @@ class RrcHub(
         }
         sessions.clear()
         roomManager.clear()
+        defaultRoomInitialized = false
         _connectedClients.value = 0
         destination = null
         Log.i(TAG, "Hub stopped")
+    }
+
+    private fun initDefaultRoom() {
+        val room = defaultRoom ?: return
+        if (defaultRoomInitialized) return
+        defaultRoomInitialized = true
+
+        val st = roomManager.getOrCreateState(room)
+        st.registered = true
+
+        // Apply default topic
+        defaultTopic?.let { st.topic = it }
+
+        // Apply default modes (e.g. "+nt")
+        val modes = defaultModes
+        if (modes != null) {
+            for (i in modes.indices) {
+                if (modes[i] == '+') continue
+                if (modes[i] == '-') continue
+                val isSet = i == 0 || modes[i - 1] != '-'
+                when (modes[i]) {
+                    'n' -> st.noOutsideMsgs = isSet
+                    't' -> st.topicOpsOnly = isSet
+                    'm' -> st.moderated = isSet
+                    'i' -> st.inviteOnly = isSet
+                    'p' -> st.isPrivate = isSet
+                }
+            }
+        }
+
+        Log.i(TAG, "Default room initialized: $room (modes=${roomManager.getModeString(room)}, topic=${st.topic})")
     }
 
     // ── Internal accessors for command handler ─────────────────────────
@@ -241,6 +281,7 @@ class RrcHub(
             if (nick != null) session.nick = normalizeNick(nick)
             session.welcomed = true
             sendWelcome(link)
+            greeting?.let { sendNotice(link, null, it) }
             return
         }
 
@@ -271,6 +312,7 @@ class RrcHub(
         if (nick != null) session.nick = normalizeNick(nick)
         session.welcomed = true
         sendWelcome(link)
+        greeting?.let { sendNotice(link, null, it) }
     }
 
     // ── T_JOIN ─────────────────────────────────────────────────────────
