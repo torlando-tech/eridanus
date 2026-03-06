@@ -29,6 +29,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +49,7 @@ fun SettingsScreen(viewModel: AraViewModel) {
     val reticulumStarted by viewModel.reticulumStarted.collectAsState()
     val connectedToShared by viewModel.connectedToSharedInstance.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
+    var localNickname by remember { mutableStateOf(nickname) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
         DarkModeOption.LIGHT -> false
@@ -74,8 +78,8 @@ fun SettingsScreen(viewModel: AraViewModel) {
                         style = MaterialTheme.typography.titleMedium,
                     )
                     OutlinedTextField(
-                        value = nickname,
-                        onValueChange = { viewModel.setNickname(it) },
+                        value = localNickname,
+                        onValueChange = { localNickname = it; viewModel.setNickname(it) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp),
