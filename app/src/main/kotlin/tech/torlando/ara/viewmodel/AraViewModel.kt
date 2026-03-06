@@ -360,9 +360,16 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
             val commandRoom = if (cmd in roomScoped) room else null
+            // Hub expects room name as first arg for room-scoped commands;
+            // inject it so users don't have to type it manually.
+            val commandText = if (cmd in roomScoped) {
+                if (rest.isEmpty()) "$cmd $room" else "$cmd $room $rest"
+            } else {
+                trimmed
+            }
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    rrcClient?.sendCommand(trimmed, room = commandRoom)
+                    rrcClient?.sendCommand(commandText, room = commandRoom)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to send command", e)
                 }

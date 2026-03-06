@@ -10,9 +10,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -191,17 +194,42 @@ fun ChatScreen(
             }
 
             val inputText = inputField.text
-            val showSuggestions = inputText.startsWith("/") && !inputText.contains(" ")
-            val filteredCommands = if (showSuggestions) {
+            val filteredCommands = if (inputText.startsWith("/") && !inputText.contains(" ")) {
                 COMMANDS.filter { it.command.startsWith(inputText.lowercase()) }
             } else emptyList()
 
-            AnimatedVisibility(visible = filteredCommands.isNotEmpty()) {
+            // User arg autocomplete for commands like /kick, /op, /ban add, etc.
+            val userArgCommands = setOf("/kick", "/op", "/deop", "/voice", "/devoice")
+            val userArgAfterSub = setOf("/ban", "/invite")
+            val inputParts = inputText.split(" ")
+            val inputCmd = inputParts.getOrNull(0)?.lowercase() ?: ""
+            val (filteredMembers, memberPrefix) = when {
+                inputCmd in userArgCommands && inputParts.size == 2 -> {
+                    val partial = inputParts[1].lowercase()
+                    members.filter {
+                        partial.isEmpty() ||
+                        it.nick?.lowercase()?.startsWith(partial) == true ||
+                        it.hashPrefix.lowercase().startsWith(partial)
+                    } to "${inputParts[0]} "
+                }
+                inputCmd in userArgAfterSub && inputParts.size == 3
+                        && inputParts[1].lowercase() in setOf("add", "del") -> {
+                    val partial = inputParts[2].lowercase()
+                    members.filter {
+                        partial.isEmpty() ||
+                        it.nick?.lowercase()?.startsWith(partial) == true ||
+                        it.hashPrefix.lowercase().startsWith(partial)
+                    } to "${inputParts[0]} ${inputParts[1]} "
+                }
+                else -> emptyList<RoomMember>() to ""
+            }
+
+            AnimatedVisibility(visible = filteredCommands.isNotEmpty() || filteredMembers.isNotEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 ) {
-                    Column {
+                    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
                         filteredCommands.forEach { suggestion ->
                             Row(
                                 modifier = Modifier
@@ -220,6 +248,30 @@ fun ChatScreen(
                                 )
                                 Text(
                                     suggestion.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        filteredMembers.forEach { member ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val name = member.nick ?: member.hashPrefix
+                                        val text = "$memberPrefix$name "
+                                        inputField = TextFieldValue(text, TextRange(text.length))
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    member.nick ?: "(no nick)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    member.hashPrefix,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
