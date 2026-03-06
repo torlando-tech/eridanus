@@ -120,6 +120,76 @@ fun HostScreen(viewModel: AraViewModel) {
                 }
             }
 
+            // Hub status (when running)
+            if (hubRunning) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "Hub Status",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("Connected Clients")
+                            Text(
+                                text = "$hubClients",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+
+                        hubDestHash?.let { hash ->
+                            val hex = hash.joinToString("") { "%02x".format(it) }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        clipboardManager.setText(AnnotatedString(hex))
+                                        Toast.makeText(context, "Hash copied", Toast.LENGTH_SHORT).show()
+                                    },
+                            ) {
+                                Text(
+                                    text = "Hash (tap to copy)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = hex,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.connectToOwnHub() },
+                                enabled = clientState == tech.torlando.ara.rrc.ClientState.DISCONNECTED,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Connect as Client")
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.announceHub() },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Announce Now")
+                            }
+                        }
+                    }
+                }
+            }
+
             // Hub configuration
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
@@ -208,76 +278,6 @@ fun HostScreen(viewModel: AraViewModel) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f),
                                 )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Hub status (when running)
-            if (hubRunning) {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "Hub Status",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text("Connected Clients")
-                            Text(
-                                text = "$hubClients",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-
-                        hubDestHash?.let { hash ->
-                            val hex = hash.joinToString("") { "%02x".format(it) }
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        clipboardManager.setText(AnnotatedString(hex))
-                                        Toast.makeText(context, "Hash copied", Toast.LENGTH_SHORT).show()
-                                    },
-                            ) {
-                                Text(
-                                    text = "Hash (tap to copy)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    text = hex,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = { viewModel.connectToOwnHub() },
-                                enabled = clientState == tech.torlando.ara.rrc.ClientState.DISCONNECTED,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Connect as Client")
-                            }
-                            OutlinedButton(
-                                onClick = { viewModel.announceHub() },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Announce Now")
                             }
                         }
                     }
