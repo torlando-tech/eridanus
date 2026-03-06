@@ -1,6 +1,8 @@
 package tech.torlando.ara.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +14,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -34,10 +39,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import tech.torlando.ara.viewmodel.AraViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun RoomListScreen(
     viewModel: AraViewModel,
@@ -53,6 +60,7 @@ fun RoomListScreen(
     var roomNameInput by remember { mutableStateOf("") }
     var roomKeyInput by remember { mutableStateOf("") }
 
+    val haptic = LocalHapticFeedback.current
     val filteredAvailable = availableRooms.filter { it.name !in joinedRooms }
 
     Scaffold(
@@ -127,26 +135,48 @@ fun RoomListScreen(
                 if (joinedRooms.isNotEmpty()) {
                     items(joinedRooms.toList().sorted()) { room ->
                         val unread = unreadCounts[room] ?: 0
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp)
-                                .clickable { onNavigateToChat(room) },
-                        ) {
-                            Row(
+                        var showMenu by remember { mutableStateOf(false) }
+                        Box {
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
+                                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                                    .combinedClickable(
+                                        onClick = { onNavigateToChat(room) },
+                                        onLongClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            showMenu = true
+                                        },
+                                    ),
                             ) {
-                                Text(
-                                    text = "#$room",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                if (unread > 0) {
-                                    Badge { Text("$unread") }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "#$room",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    if (unread > 0) {
+                                        Badge { Text("$unread") }
+                                    }
                                 }
+                            }
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Leave Room") },
+                                    onClick = {
+                                        showMenu = false
+                                        viewModel.partRoom(room)
+                                    },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null) },
+                                )
                             }
                         }
                     }
