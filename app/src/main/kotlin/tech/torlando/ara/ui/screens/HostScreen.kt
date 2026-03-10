@@ -1,6 +1,7 @@
 package tech.torlando.ara.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,21 +16,31 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +49,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import tech.torlando.ara.data.DefaultRoomConfig
 import tech.torlando.ara.viewmodel.AraViewModel
+
+private data class ModeOption(val flag: String, val label: String, val description: String)
+
+private val MODE_OPTIONS = listOf(
+    ModeOption("r", "Registered (+r)", "Persists when empty, appears in /list"),
+    ModeOption("n", "No Outside Msgs (+n)", "Only members can send messages"),
+    ModeOption("t", "Ops-Only Topic (+t)", "Only operators can change the topic"),
+    ModeOption("m", "Moderated (+m)", "Only voiced users can speak"),
+    ModeOption("i", "Invite Only (+i)", "Users need an invite to join"),
+    ModeOption("p", "Private (+p)", "Hidden from the public room list"),
+    ModeOption("k", "Key Protected (+k)", "Requires a password to join"),
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -51,18 +76,14 @@ fun HostScreen(viewModel: AraViewModel) {
     val announceInterval by viewModel.announceInterval.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
     val hubGreeting by viewModel.hubGreeting.collectAsState()
-    val hubDefaultRoom by viewModel.hubDefaultRoom.collectAsState()
-    val hubDefaultTopic by viewModel.hubDefaultTopic.collectAsState()
-    val hubDefaultModes by viewModel.hubDefaultModes.collectAsState()
+    val defaultRooms by viewModel.hubDefaultRooms.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
-    // Local text state to avoid cursor desync from async DataStore round-trip.
-    // By the time the user navigates here, DataStore values are already loaded.
     var localHubName by remember { mutableStateOf(hubName) }
     var localGreeting by remember { mutableStateOf(hubGreeting) }
-    var localDefaultRoom by remember { mutableStateOf(hubDefaultRoom) }
-    var localDefaultTopic by remember { mutableStateOf(hubDefaultTopic) }
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -74,7 +95,7 @@ fun HostScreen(viewModel: AraViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -116,100 +137,6 @@ fun HostScreen(viewModel: AraViewModel) {
                             },
                             enabled = reticulumStarted,
                         )
-                    }
-                }
-            }
-
-            // Hub configuration
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        text = "Hub Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-
-                    OutlinedTextField(
-                        value = localGreeting,
-                        onValueChange = { localGreeting = it; viewModel.setHubGreeting(it) },
-                        label = { Text("Welcome Message") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = false,
-                        maxLines = 3,
-                        supportingText = { Text("Shown to clients when they connect") },
-                        enabled = !hubRunning,
-                    )
-
-                    OutlinedTextField(
-                        value = localDefaultRoom,
-                        onValueChange = { localDefaultRoom = it; viewModel.setHubDefaultRoom(it) },
-                        label = { Text("Default Room") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        supportingText = { Text("Pre-created and registered on hub start") },
-                        enabled = !hubRunning,
-                    )
-
-                    OutlinedTextField(
-                        value = localDefaultTopic,
-                        onValueChange = { localDefaultTopic = it; viewModel.setHubDefaultTopic(it) },
-                        label = { Text("Default Room Topic") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !hubRunning,
-                    )
-
-                    Text(
-                        text = "Default Room Modes",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = "These control who can send messages, join, or change the topic in the default room.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    data class ModeOption(val flag: String, val label: String, val description: String)
-                    val modeOptions = listOf(
-                        ModeOption("n", "No Outside Msgs (+n)", "Only room members can send messages"),
-                        ModeOption("t", "Ops-Only Topic (+t)", "Only operators can change the topic"),
-                        ModeOption("m", "Moderated (+m)", "Only approved users can speak (use /voice to approve)"),
-                        ModeOption("i", "Invite Only (+i)", "Users need an invite or operator status to join"),
-                        ModeOption("p", "Private (+p)", "Room is hidden from the public room list"),
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        for (mode in modeOptions) {
-                            val isSet = hubDefaultModes.contains(mode.flag)
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                FilterChip(
-                                    selected = isSet,
-                                    onClick = {
-                                        if (!hubRunning) {
-                                            val newModes = if (isSet) {
-                                                hubDefaultModes.replace(mode.flag, "")
-                                            } else {
-                                                hubDefaultModes + mode.flag
-                                            }
-                                            val flags = newModes.filter { it.isLetter() }
-                                            val sorted = flags.toSortedSet().joinToString("")
-                                            viewModel.setHubDefaultModes(if (sorted.isNotEmpty()) "+$sorted" else "")
-                                        }
-                                    },
-                                    label = { Text(mode.label) },
-                                    enabled = !hubRunning,
-                                )
-                                Text(
-                                    text = mode.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -284,6 +211,82 @@ fun HostScreen(viewModel: AraViewModel) {
                 }
             }
 
+            // Hub greeting
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "Hub Settings",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    OutlinedTextField(
+                        value = localGreeting,
+                        onValueChange = { localGreeting = it; viewModel.setHubGreeting(it) },
+                        label = { Text("Welcome Message") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 3,
+                        supportingText = { Text("Shown to clients when they connect") },
+                        enabled = !hubRunning,
+                    )
+                }
+            }
+
+            // Default rooms
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Default Rooms",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        if (!hubRunning) {
+                            TextButton(onClick = {
+                                viewModel.setHubDefaultRooms(listOf(DefaultRoomConfig(name = "")) + defaultRooms)
+                                coroutineScope.launch {
+                                    // Scroll so the new card (just below this one) is visible
+                                    scrollState.animateScrollTo(scrollState.maxValue)
+                                }
+                            }) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Text("Add Room")
+                            }
+                        }
+                    }
+                    Text(
+                        text = "These rooms are pre-created when the hub starts.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            defaultRooms.forEachIndexed { index, roomCfg ->
+                DefaultRoomCard(
+                    config = roomCfg,
+                    enabled = !hubRunning,
+                    onUpdate = { updated ->
+                        viewModel.setHubDefaultRooms(
+                            defaultRooms.toMutableList().also { it[index] = updated }
+                        )
+                    },
+                    onDelete = {
+                        viewModel.setHubDefaultRooms(
+                            defaultRooms.toMutableList().also { it.removeAt(index) }
+                        )
+                    },
+                )
+            }
+
             // Announce interval selector
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
@@ -326,6 +329,153 @@ fun HostScreen(viewModel: AraViewModel) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DefaultRoomCard(
+    config: DefaultRoomConfig,
+    enabled: Boolean,
+    onUpdate: (DefaultRoomConfig) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var localName by remember(config) { mutableStateOf(config.name) }
+    var localTopic by remember(config) { mutableStateOf(config.topic) }
+    var localKey by remember(config) { mutableStateOf(config.key) }
+    var expanded by remember { mutableStateOf(config.name.isBlank()) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = if (localName.isNotBlank()) "#${localName.trim().lowercase()}" else "New Room",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    if (!expanded && config.modes.isNotBlank()) {
+                        Text(
+                            text = config.modes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (enabled) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Remove room",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    OutlinedTextField(
+                        value = localName,
+                        onValueChange = {
+                            localName = it
+                            onUpdate(config.copy(name = it.trim().lowercase()))
+                        },
+                        label = { Text("Room Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = enabled,
+                    )
+
+                    OutlinedTextField(
+                        value = localTopic,
+                        onValueChange = {
+                            localTopic = it
+                            onUpdate(config.copy(topic = it))
+                        },
+                        label = { Text("Topic") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = enabled,
+                    )
+
+                    Text(
+                        text = "Modes",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        for (mode in MODE_OPTIONS) {
+                            val isSet = config.modes.contains(mode.flag)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FilterChip(
+                                    selected = isSet,
+                                    onClick = {
+                                        if (enabled) {
+                                            val newModes = if (isSet) {
+                                                config.modes.replace(mode.flag, "")
+                                            } else {
+                                                config.modes + mode.flag
+                                            }
+                                            val flags = newModes.filter { it.isLetter() }
+                                            val sorted = flags.toSortedSet().joinToString("")
+                                            onUpdate(config.copy(modes = if (sorted.isNotEmpty()) "+$sorted" else ""))
+                                        }
+                                    },
+                                    label = { Text(mode.label) },
+                                    enabled = enabled,
+                                )
+                                Text(
+                                    text = mode.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+
+                    if (config.modes.contains("k")) {
+                        OutlinedTextField(
+                            value = localKey,
+                            onValueChange = {
+                                localKey = it
+                                onUpdate(config.copy(key = it))
+                            },
+                            label = { Text("Room Key") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            supportingText = { Text("Password required to join") },
+                            enabled = enabled,
+                        )
+                    }
+                }
             }
         }
     }

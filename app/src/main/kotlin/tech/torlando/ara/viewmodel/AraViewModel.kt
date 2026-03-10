@@ -1,13 +1,7 @@
 package tech.torlando.ara.viewmodel
 
 import android.app.Application
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
-import android.os.IBinder
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import co.nstant.`in`.cbor.CborDecoder
@@ -21,16 +15,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import network.reticulum.Reticulum
 import network.reticulum.identity.Identity
-import tech.torlando.ara.ReticulumService
+import network.reticulum.interfaces.InterfaceAdapter
+import network.reticulum.interfaces.local.LocalClientInterface
+import network.reticulum.transport.AnnounceHandler
+import network.reticulum.transport.Transport
 import tech.torlando.ara.data.DarkModeOption
+import tech.torlando.ara.data.DefaultRoomConfig
 import tech.torlando.ara.data.IdentityStore
 import tech.torlando.ara.data.PreferencesManager
 import tech.torlando.ara.data.db.AraDatabase
 import tech.torlando.ara.data.db.HubEntity
 import tech.torlando.ara.rrc.RrcClient
+import tech.torlando.ara.rrc.RrcConstants
 import tech.torlando.ara.rrc.RrcEvent
 import tech.torlando.ara.rrc.RrcHub
+import tech.torlando.ara.service.AraConnectionService
 import tech.torlando.ara.ui.theme.PresetTheme
 import java.io.ByteArrayInputStream
 
@@ -149,88 +150,75 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, SharingStarted.Eagerly, ""
     )
 
-    val hubDefaultRoom: StateFlow<String> = prefs.hubDefaultRoom.stateIn(
-        viewModelScope, SharingStarted.Eagerly, ""
-    )
-
-    val hubDefaultTopic: StateFlow<String> = prefs.hubDefaultTopic.stateIn(
-        viewModelScope, SharingStarted.Eagerly, ""
-    )
-
-    val hubDefaultModes: StateFlow<String> = prefs.hubDefaultModes.stateIn(
-        viewModelScope, SharingStarted.Eagerly, "+nt"
+    val hubDefaultRooms: StateFlow<List<DefaultRoomConfig>> = prefs.hubDefaultRooms.stateIn(
+        viewModelScope, SharingStarted.Eagerly, emptyList()
     )
 
     // Identities
     private var hubIdentity: Identity? = null
     private var clientIdentity: Identity? = null
 
-    // Service binding
-    private var reticulumService: ReticulumService? = null
-    private var serviceBound = false
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val service = (binder as ReticulumService.LocalBinder).getService()
-            reticulumService = service
-            serviceBound = true
-
-            // Forward announce events from service to ViewModel
-            service.onHubAnnounce = { destHash, appData ->
-                handleHubAnnounce(destHash, appData)
-            }
-
-            // Mirror service state
-            viewModelScope.launch {
-                service.reticulumStarted.collect { _reticulumStarted.value = it }
-            }
-            viewModelScope.launch {
-                service.connectedToSharedInstance.collect { _connectedToSharedInstance.value = it }
-            }
-
-            Log.i(TAG, "Bound to ReticulumService")
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            reticulumService?.onHubAnnounce = null
-            reticulumService = null
-            serviceBound = false
-            Log.w(TAG, "Disconnected from ReticulumService")
-        }
-    }
-
     init {
-        initIdentities()
-        startAndBindService()
+        initReticulum()
     }
 
-    private fun initIdentities() {
+    private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
-            hubIdentity = identityStore.loadHubIdentity()
-                ?: Identity.create().also { identityStore.saveHubIdentity(it) }
-            clientIdentity = identityStore.loadClientIdentity()
-                ?: Identity.create().also { identityStore.saveClientIdentity(it) }
+            try {
+                // Start Reticulum in standalone mode first
+                val reticulum = Reticulum.start()
+
+                hubIdentity = identityStore.loadHubIdentity()
+                    ?: Identity.create().also { identityStore.saveHubIdentity(it) }
+                clientIdentity = identityStore.loadClientIdentity()
+                    ?: Identity.create().also { identityStore.saveClientIdentity(it) }
+
+                _reticulumStarted.value = true
+
+                // Now try to connect to shared instance manually (like Carina does)
+                val connected = tryConnectSharedInstance()
+                _connectedToSharedInstance.value = connected
+                Log.i(TAG, "Reticulum started (shared instance: $connected)")
+
+                registerAnnounceHandler()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start Reticulum", e)
+            }
         }
     }
 
-    private fun startAndBindService() {
-        val app = getApplication<Application>()
-        val intent = Intent(app, ReticulumService::class.java)
-        ContextCompat.startForegroundService(app, intent)
-        app.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    private fun tryConnectSharedInstance(): Boolean {
+        val port = 37428
+        if (!Reticulum.isSharedInstanceRunning(port)) {
+            Log.w(TAG, "No shared instance on port $port")
+            return false
+        }
+        return try {
+            val client = LocalClientInterface(
+                name = "SharedInstanceClient",
+                tcpPort = port,
+            )
+            client.start()
+            Transport.registerInterface(InterfaceAdapter.getOrCreate(client))
+            Log.i(TAG, "Connected to shared instance on port $port")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to connect to shared instance", e)
+            false
+        }
     }
 
-    private fun updateServiceNotification() {
-        val service = reticulumService ?: return
-        val hubRunning = _hubRunning.value
-        val connected = _connectedHubName.value
-        val text = when {
-            hubRunning && connected != null -> "Hosting hub · Connected to $connected"
-            hubRunning -> "Hosting hub"
-            connected != null -> "Connected to $connected"
-            else -> "Listening for hubs"
+    private fun registerAnnounceHandler() {
+        try {
+            val handler = AnnounceHandler { destHash, _, appData ->
+                handleHubAnnounce(destHash, appData)
+                true
+            }
+            Transport.registerAnnounceHandler(handler)
+            Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register announce handler", e)
         }
-        service.updateNotification(text)
     }
 
     private fun handleHubAnnounce(destHash: ByteArray, appData: ByteArray?) {
@@ -287,6 +275,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         val id = clientIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                AraConnectionService.start(getApplication())
                 val client = RrcClient(id, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.ara.rrc.ClientState.CONNECTING
@@ -321,7 +310,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
             _hubGreetingMessage.value = null
-            updateServiceNotification()
+            if (!_hubRunning.value) {
+                AraConnectionService.stop(getApplication())
+            }
         }
     }
 
@@ -362,9 +353,16 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
             val commandRoom = if (cmd in roomScoped) room else null
+            // Hub expects room name as first arg for room-scoped commands;
+            // inject it so users don't have to type it manually.
+            val commandText = if (cmd in roomScoped) {
+                if (rest.isEmpty()) "$cmd $room" else "$cmd $room $rest"
+            } else {
+                trimmed
+            }
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    rrcClient?.sendCommand(trimmed, room = commandRoom)
+                    rrcClient?.sendCommand(commandText, room = commandRoom)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to send command", e)
                 }
@@ -466,25 +464,8 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setHubDefaultRoom(room: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultRoom(room)
-            rrcHub?.defaultRoom = room.trim().lowercase().ifEmpty { null }
-        }
-    }
-
-    fun setHubDefaultTopic(topic: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultTopic(topic)
-            rrcHub?.defaultTopic = topic.ifEmpty { null }
-        }
-    }
-
-    fun setHubDefaultModes(modes: String) {
-        viewModelScope.launch {
-            prefs.setHubDefaultModes(modes)
-            rrcHub?.defaultModes = modes.ifEmpty { null }
-        }
+    fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
+        viewModelScope.launch { prefs.setHubDefaultRooms(rooms) }
     }
 
     fun connectToOwnHub() {
@@ -503,6 +484,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(TAG, "connectToOwnHub: hash=${hash.joinToString("") { "%02x".format(it) }}")
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                AraConnectionService.start(getApplication())
                 val client = RrcClient(clientId, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.ara.rrc.ClientState.CONNECTING
@@ -542,12 +524,10 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
         val id = hubIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val hub = RrcHub(id, hubName.value)
-                hub.greeting = hubGreeting.value.ifEmpty { null }
-                val defRoom = hubDefaultRoom.value.trim().lowercase()
-                hub.defaultRoom = defRoom.ifEmpty { null }
-                hub.defaultTopic = hubDefaultTopic.value.ifEmpty { null }
-                hub.defaultModes = hubDefaultModes.value.ifEmpty { null }
+                val hub = RrcHub(id, prefs.getHubName())
+                hub.greeting = prefs.getHubGreeting().ifEmpty { null }
+                hub.defaultRooms = prefs.getHubDefaultRooms()
+                    .filter { it.name.isNotBlank() }
                 // Hub owner is always a server operator
                 clientIdentity?.let { hub.roomManager.addServerOp(it.hash) }
                 rrcHub = hub
@@ -561,12 +541,13 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 hub.start()
                 _hubRunning.value = true
                 _hubDestHash.value = hub.destHash
-                updateServiceNotification()
+                AraConnectionService.start(getApplication())
 
                 val interval = announceInterval.value
                 if (interval > 0) {
                     hub.startAnnounceLoop(interval, viewModelScope)
                 }
+                hub.startPingLoop(viewModelScope)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start hub", e)
             }
@@ -580,7 +561,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
             _hubRunning.value = false
             _hubClients.value = 0
             _hubDestHash.value = null
-            updateServiceNotification()
+            if (_clientState.value == tech.torlando.ara.rrc.ClientState.DISCONNECTED) {
+                AraConnectionService.stop(getApplication())
+            }
         }
     }
 
@@ -590,7 +573,6 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.ara.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
-                updateServiceNotification()
                 requestRoomList()
             }
 
@@ -663,9 +645,15 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         _availableRooms.value = rooms
+                        _currentRoom.value?.let { displayRoom ->
+                            addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
+                        }
                         return
                     } else if (event.body == "No public rooms registered") {
                         _availableRooms.value = emptyList()
+                        _currentRoom.value?.let { displayRoom ->
+                            addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
+                        }
                         return
                     } else {
                         // Roomless notice that isn't /list — treat as hub greeting
@@ -733,6 +721,9 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
                 _roomMemberCounts.value = emptyMap()
                 _roomMemberList.value = emptyMap()
                 _hubGreetingMessage.value = null
+                if (!_hubRunning.value) {
+                    AraConnectionService.stop(getApplication())
+                }
             }
 
             is RrcEvent.ConnectionFailed -> {
@@ -822,12 +813,7 @@ class AraViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        rrcClient?.disconnect()
-        rrcHub?.stop()
-        if (serviceBound) {
-            reticulumService?.onHubAnnounce = null
-            getApplication<Application>().unbindService(serviceConnection)
-            serviceBound = false
-        }
+        // Don't disconnect/stop here — the foreground service keeps the process alive.
+        // If the service is not running (user manually disconnected), these are already null.
     }
 }
