@@ -50,7 +50,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     val nickname: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[KEY_NICKNAME] ?: ""
+        prefs[KEY_NICKNAME] ?: "Anonymous Peer"
     }
 
     val hubName: Flow<String> = context.dataStore.data.map { prefs ->

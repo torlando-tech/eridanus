@@ -76,7 +76,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     )
 
     val nickname: StateFlow<String> = prefs.nickname.stateIn(
-        viewModelScope, SharingStarted.Eagerly, ""
+        viewModelScope, SharingStarted.Eagerly, "Anonymous Peer"
     )
 
     val hubName: StateFlow<String> = prefs.hubName.stateIn(
