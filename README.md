@@ -31,7 +31,7 @@ Want to learn more? Visit [Reticulum's documentation](https://reticulum.network/
 
 Eridanus is a [constellation](https://en.wikipedia.org/wiki/Eridanus_(constellation)) representing a great celestial river winding through the southern sky. Like its namesake, the app carries messages along winding paths through the mesh — finding a way even when the direct route doesn't exist. 
 > RRC exists for conversations that are ephemeral, contextual, and situational.
-_[kc1awv](https://rrc.kc1awv.net/0-RRC-welcome.html#)_
+> -_[kc1awv](https://rrc.kc1awv.net/0-RRC-welcome.html#)_
 
 > No man ever steps in the same river twice, for it's not the same river and he's not the same man.
-_Heraclitus_
+> -_Heraclitus_
