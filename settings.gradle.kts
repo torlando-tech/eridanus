@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ara"
+rootProject.name = "eridanus"
 
 include(":app")
 

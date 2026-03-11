@@ -11,219 +11,397 @@
         android:pivotX="54"
         android:pivotY="54">
 
-    <!-- Constellation connecting lines -->
-    <!-- Star 1 to Star 2 -->
+    <!-- Eridanus constellation connecting lines -->
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M30.8,57.0 L42.8,49.0"/>
-    <!-- Star 2 to Star 3 -->
+        android:pathData="M81.1,89.0 L79.4,81.2"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M42.8,49.0 L55.8,48.0"/>
-    <!-- Star 3 to Star 4 -->
+        android:pathData="M79.4,81.2 L73.7,75.1"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M55.8,48.0 L63.2,36.5"/>
-    <!-- Star 9 to Star 1 -->
+        android:pathData="M73.7,75.1 L71.6,68.7"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M27.9,59.0 L30.8,57.0"/>
-    <!-- Star 6 to Star 5 -->
+        android:pathData="M71.6,68.7 L71.9,64.8"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M28.4,64.8 L38.4,71.5"/>
-    <!-- Star 5 to Star 7 -->
+        android:pathData="M71.9,64.8 L67.4,65.0"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M38.4,71.5 L47.1,68.2"/>
-    <!-- Star 7 to Canopus -->
+        android:pathData="M67.4,65.0 L62.0,68.2"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M47.1,68.2 L88.9,43.6"/>
-    <!-- Sub-constellation: Star 13 to Star 6 -->
+        android:pathData="M62.0,68.2 L57.8,64.5"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M21.9,64.3 L28.4,64.8"/>
-    <!-- Sub-constellation: Star 12 to Star 13 -->
+        android:pathData="M57.8,64.5 L54.7,59.4"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M18.8,62.3 L21.9,64.3"/>
-    <!-- Sub-constellation: Star 11 to Star 12 -->
+        android:pathData="M54.7,59.4 L47.1,56.8"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M18.0,59.7 L18.8,62.3"/>
-    <!-- Sub-constellation: Star 11 to Star 10 -->
+        android:pathData="M47.1,56.8 L45.5,57.3"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M18.0,59.7 L21.0,57.3"/>
-    <!-- Sub-constellation: Star 10 to Star 9 -->
+        android:pathData="M45.5,57.3 L41.9,53.2"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M21.0,57.3 L27.9,59.0"/>
-    <!-- Sub-constellation: Star 9 to Star 6 -->
+        android:pathData="M41.9,53.2 L42.4,52.1"/>
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="1.2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
-        android:pathData="M27.9,59.0 L28.4,64.8"/>
+        android:pathData="M42.4,52.1 L51.2,44.1"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M51.2,44.1 L53.1,44.8"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M53.1,44.8 L55.0,43.0"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M55.0,43.0 L58.8,40.9"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M58.8,40.9 L63.1,41.1"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M63.1,41.1 L68.0,43.8"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M68.0,43.8 L73.8,37.8"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M73.8,37.8 L74.7,32.0"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M74.7,32.0 L71.3,25.3"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M71.3,25.3 L59.2,25.4"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M59.2,25.4 L55.8,25.8"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M55.8,25.8 L54.9,28.8"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M54.9,28.8 L51.2,30.7"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M51.2,30.7 L46.1,22.5"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M46.1,22.5 L37.2,19.0"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M37.2,19.0 L33.9,19.3"/>
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M33.9,19.3 L26.9,22.8"/>
 
     <!-- Star glow halos -->
-    <!-- Canopus glow -->
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.15"
-        android:pathData="M88.9,43.6m-7.5,0a7.5,7.5 0,1 1,15,0a7.5,7.5 0,1 1,-15,0"/>
-    <!-- Star 7 glow -->
+        android:pathData="M26.9,22.8m-3.1,0a3.1,3.1 0,1 1,6.2,0a3.1,3.1 0,1 1,-6.2,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.15"
-        android:pathData="M47.1,68.2m-5.5,0a5.5,5.5 0,1 1,11,0a5.5,5.5 0,1 1,-11,0"/>
-    <!-- Star 3 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M55.8,48.0m-5,0a5,5 0,1 1,10,0a5,5 0,1 1,-10,0"/>
-    <!-- Star 6 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M28.4,64.8m-5,0a5,5 0,1 1,10,0a5,5 0,1 1,-10,0"/>
-    <!-- Star 5 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M38.4,71.5m-5,0a5,5 0,1 1,10,0a5,5 0,1 1,-10,0"/>
-    <!-- Star 1 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M30.8,57.0m-4.5,0a4.5,4.5 0,1 1,9,0a4.5,4.5 0,1 1,-9,0"/>
-    <!-- Star 2 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M42.8,49.0m-4.2,0a4.2,4.2 0,1 1,8.4,0a4.2,4.2 0,1 1,-8.4,0"/>
-    <!-- Star 4 glow -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.15"
-        android:pathData="M63.2,36.5m-3.8,0a3.8,3.8 0,1 1,7.6,0a3.8,3.8 0,1 1,-7.6,0"/>
-    <!-- Star 9 glow -->
+        android:pathData="M51.2,30.7m-3.1,0a3.1,3.1 0,1 1,6.2,0a3.1,3.1 0,1 1,-6.2,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.12"
-        android:pathData="M27.9,59.0m-4,0a4,4 0,1 1,8,0a4,4 0,1 1,-8,0"/>
-    <!-- Star 10 glow -->
+        android:pathData="M33.9,19.3m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.12"
-        android:pathData="M21.0,57.3m-3.5,0a3.5,3.5 0,1 1,7,0a3.5,3.5 0,1 1,-7,0"/>
-    <!-- Star 11 glow -->
+        android:pathData="M37.2,19.0m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.12"
-        android:pathData="M18.0,59.7m-3.5,0a3.5,3.5 0,1 1,7,0a3.5,3.5 0,1 1,-7,0"/>
-    <!-- Star 12 glow -->
+        android:pathData="M46.1,22.5m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.12"
-        android:pathData="M18.8,62.3m-3.5,0a3.5,3.5 0,1 1,7,0a3.5,3.5 0,1 1,-7,0"/>
-    <!-- Star 13 glow -->
+        android:pathData="M54.9,28.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
     <path
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.12"
-        android:pathData="M21.9,64.3m-3.5,0a3.5,3.5 0,1 1,7,0a3.5,3.5 0,1 1,-7,0"/>
+        android:pathData="M55.9,25.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M59.2,25.4m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M71.3,25.3m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M74.7,32.0m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M73.8,37.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M68.0,43.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M63.1,41.1m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M58.8,40.9m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M55.0,43.0m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M53.1,44.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M51.2,44.1m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M42.4,52.1m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M45.5,57.2m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M57.8,64.5m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M62.0,68.2m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M71.9,64.8m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M71.6,68.7m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M73.7,75.1m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M79.4,81.2m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
+    <!-- Achernar glow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M81.1,89.0m-4.8,0a4.8,4.8 0,1 1,9.6,0a4.8,4.8 0,1 1,-9.6,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M54.7,59.4m-1.7,0a1.7,1.7 0,1 1,3.4,0a1.7,1.7 0,1 1,-3.4,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M47.1,56.8m-3.1,0a3.1,3.1 0,1 1,6.2,0a3.1,3.1 0,1 1,-6.2,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M67.4,65.0m-3.6,0a3.6,3.6 0,1 1,7.2,0a3.6,3.6 0,1 1,-7.2,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.12"
+        android:pathData="M41.9,53.2m-2.3,0a2.3,2.3 0,1 1,4.6,0a2.3,2.3 0,1 1,-4.6,0"/>
 
     <!-- Star cores (solid white) -->
-    <!-- Canopus (brightest) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M88.9,43.6m-3,0a3,3 0,1 1,6,0a3,3 0,1 1,-6,0"/>
-    <!-- Star 7 -->
+        android:pathData="M26.9,22.8m-1.2,0a1.2,1.2 0,1 1,2.4,0a1.2,1.2 0,1 1,-2.4,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M47.1,68.2m-2.2,0a2.2,2.2 0,1 1,4.4,0a2.2,2.2 0,1 1,-4.4,0"/>
-    <!-- Star 3 -->
+        android:pathData="M51.2,30.7m-1.2,0a1.2,1.2 0,1 1,2.4,0a1.2,1.2 0,1 1,-2.4,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M55.8,48.0m-2,0a2,2 0,1 1,4,0a2,2 0,1 1,-4,0"/>
-    <!-- Star 6 -->
+        android:pathData="M33.9,19.3m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M28.4,64.8m-2,0a2,2 0,1 1,4,0a2,2 0,1 1,-4,0"/>
-    <!-- Star 5 -->
+        android:pathData="M37.2,19.0m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M38.4,71.5m-2,0a2,2 0,1 1,4,0a2,2 0,1 1,-4,0"/>
-    <!-- Star 1 -->
+        android:pathData="M46.1,22.5m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M30.8,57.0m-1.8,0a1.8,1.8 0,1 1,3.6,0a1.8,1.8 0,1 1,-3.6,0"/>
-    <!-- Star 2 -->
+        android:pathData="M54.9,28.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M42.8,49.0m-1.7,0a1.7,1.7 0,1 1,3.4,0a1.7,1.7 0,1 1,-3.4,0"/>
-    <!-- Star 4 -->
+        android:pathData="M55.9,25.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M63.2,36.5m-1.5,0a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0"/>
-    <!-- Star 9 -->
+        android:pathData="M59.2,25.4m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M27.9,59.0m-1.8,0a1.8,1.8 0,1 1,3.6,0a1.8,1.8 0,1 1,-3.6,0"/>
-    <!-- Star 10 -->
+        android:pathData="M71.3,25.3m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M21.0,57.3m-1.5,0a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0"/>
-    <!-- Star 11 -->
+        android:pathData="M74.7,32.0m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M18.0,59.7m-1.5,0a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0"/>
-    <!-- Star 12 -->
+        android:pathData="M73.8,37.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M18.8,62.3m-1.5,0a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0"/>
-    <!-- Star 13 -->
+        android:pathData="M68.0,43.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M21.9,64.3m-1.5,0a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0"/>
+        android:pathData="M63.1,41.1m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58.8,40.9m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55.0,43.0m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53.1,44.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M51.2,44.1m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42.4,52.1m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45.5,57.2m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M57.8,64.5m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62.0,68.2m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M71.9,64.8m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M71.6,68.7m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M73.7,75.1m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M79.4,81.2m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
+    <!-- Achernar core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M81.1,89.0m-1.9,0a1.9,1.9 0,1 1,3.8,0a1.9,1.9 0,1 1,-3.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54.7,59.4m-0.7,0a0.7,0.7 0,1 1,1.4,0a0.7,0.7 0,1 1,-1.4,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M47.1,56.8m-1.2,0a1.2,1.2 0,1 1,2.4,0a1.2,1.2 0,1 1,-2.4,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M67.4,65.0m-1.4,0a1.4,1.4 0,1 1,2.8,0a1.4,1.4 0,1 1,-2.8,0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41.9,53.2m-0.9,0a0.9,0.9 0,1 1,1.8,0a0.9,0.9 0,1 1,-1.8,0"/>
 
     </group>
 </vector>

@@ -8,11 +8,11 @@ plugins {
 val coroutinesVersion: String by project
 
 android {
-    namespace = "tech.torlando.ara"
+    namespace = "tech.torlando.eridanus"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "tech.torlando.ara"
+        applicationId = "tech.torlando.eridanus"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
