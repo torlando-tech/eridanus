@@ -2,7 +2,7 @@
 
 # Eridanus
 
-IRC-style chatrooms over [Reticulum](https://github.com/markqvist/Reticulum).
+IRC-style chatrooms over [Reticulum](https://github.com/markqvist/Reticulum), built on [RRC](https://rrc.kc1awv.net/)
 
 Eridanus is an Android app that lets you create and join chatrooms on the Reticulum network. Think of it like IRC, but running on a decentralized mesh — no internet, no servers, no accounts required. Rooms are hosted on shared hubs, and anyone on the network can connect.
 
@@ -19,7 +19,7 @@ Eridanus is an Android app that lets you create and join chatrooms on the Reticu
 
 Download the latest release from [Releases](https://github.com/torlando-tech/eridanus/releases) and install on your Android device.
 
-You'll need a way to connect to the Reticulum network. The easiest option is [Sideband](https://github.com/markqvist/Sideband) running on the same device, or you can configure a shared Reticulum instance via [Carina](https://github.com/torlando-tech/carina). If you already have RNS running on your network, Eridanus can connect to it directly.
+You'll need a way to connect to the Reticulum network. The easiest option is [Sideband](https://github.com/markqvist/Sideband) running on the same device, or you can configure a shared Reticulum instance via [Carina](https://github.com/torlando-tech/carina). If you already have RNS running on your device, Eridanus can connect to it directly.
 
 ## About Reticulum
 
@@ -29,4 +29,8 @@ Want to learn more? Visit [Reticulum's documentation](https://reticulum.network/
 
 ## Why "Eridanus"
 
-Eridanus is a [constellation](https://en.wikipedia.org/wiki/Eridanus_(constellation)) representing a great celestial river winding through the southern sky. Like its namesake, the app carries messages along winding paths through the mesh — finding a way even when the direct route doesn't exist.
+Eridanus is a [constellation](https://en.wikipedia.org/wiki/Eridanus_(constellation)) representing a great celestial river winding through the southern sky. Like its namesake, the app carries messages along winding paths through the mesh — finding a way even when the direct route doesn't exist. 
+> RRC exists for conversations that are ephemeral, contextual, and situational.
+_[kc1awv](https://rrc.kc1awv.net/0-RRC-welcome.html#)_
+> No man ever steps in the same river twice, for it's not the same river and he's not the same man.
+_Heraclitus_
