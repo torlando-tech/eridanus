@@ -510,7 +510,7 @@ class HubCommandHandler(
             val targetSession = hub.getSession(targetLink) ?: return true
             val targetHash = targetSession.peerHash ?: return true
 
-            val isKeyed = st.key != null && st.key!!.isNotEmpty()
+            val isKeyed = !st.key.isNullOrEmpty()
             val isInviteOnly = st.inviteOnly
 
             if (isKeyed) {

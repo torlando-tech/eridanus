@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     kotlin("android")
@@ -7,6 +9,53 @@ plugins {
 
 val coroutinesVersion: String by project
 
+// Parse version from git tag (e.g., v1.2.3 -> versionName "1.2.3", versionCode calculated)
+// Scheme: major * 10M + minor * 100K + patch * 1K (+ commits for dev builds)
+fun getVersionFromTag(): Pair<Int, String> {
+    return try {
+        val tagName =
+            providers.exec {
+                commandLine("git", "describe", "--tags", "--exact-match")
+            }.standardOutput.asText.get().trim()
+
+        val versionString = tagName.removePrefix("v")
+        val parts = versionString.split(".")
+        val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val patch = parts.getOrNull(2)?.split("-")?.get(0)?.toIntOrNull() ?: 0
+
+        val versionCode = major * 10_000_000 + minor * 100_000 + patch * 1_000
+        Pair(versionCode, versionString)
+    } catch (e: Exception) {
+        try {
+            val describe =
+                providers.exec {
+                    commandLine("git", "describe", "--tags", "--long")
+                }.standardOutput.asText.get().trim()
+
+            val parts = describe.removePrefix("v").split("-")
+            val versionPart = parts[0]
+            val commitCount = parts.getOrNull(parts.size - 2)?.toIntOrNull() ?: 0
+
+            val versionParts = versionPart.split(".")
+            val major = versionParts.getOrNull(0)?.toIntOrNull() ?: 0
+            val minor = versionParts.getOrNull(1)?.toIntOrNull() ?: 0
+            val patch = versionParts.getOrNull(2)?.toIntOrNull() ?: 0
+
+            val versionCode = major * 10_000_000 + minor * 100_000 + patch * 1_000 + commitCount
+            val versionName = "$major.$minor.$patch.${commitCount.toString().padStart(4, '0')}-dev"
+
+            println("Dev build: $versionName (versionCode=$versionCode)")
+            Pair(versionCode, versionName)
+        } catch (e2: Exception) {
+            println("Warning: No git tags found, using fallback version")
+            Pair(1_000_000, "0.0.0-dev")
+        }
+    }
+}
+
+val (versionCodeValue, versionNameValue) = getVersionFromTag()
+
 android {
     namespace = "tech.torlando.eridanus"
     compileSdk = 34
@@ -15,8 +64,8 @@ android {
         applicationId = "tech.torlando.eridanus"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = versionCodeValue
+        versionName = versionNameValue
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -24,13 +73,62 @@ android {
         }
     }
 
+    // Track whether release signing is configured
+    val releaseSigningConfigured =
+        run {
+            val keystoreFile = System.getenv("KEYSTORE_FILE")
+            val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+            val keyAlias = System.getenv("KEY_ALIAS")
+            val keyPassword = System.getenv("KEY_PASSWORD")
+
+            !keystoreFile.isNullOrEmpty() && !keystorePassword.isNullOrEmpty() &&
+                !keyAlias.isNullOrEmpty() && !keyPassword.isNullOrEmpty()
+        }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                val keystoreFile = System.getenv("KEYSTORE_FILE")!!
+                val keystorePassword = System.getenv("KEYSTORE_PASSWORD")!!
+                val keyAlias = System.getenv("KEY_ALIAS")!!
+                val keyPassword = System.getenv("KEY_PASSWORD")!!
+
+                try {
+                    val keystoreDir = file("${layout.buildDirectory.get().asFile}/keystore")
+                    keystoreDir.mkdirs()
+                    val decodedKeystore = file("$keystoreDir/release.keystore")
+
+                    val cleanedKeystoreFile = keystoreFile.replace("\\s".toRegex(), "")
+                    decodedKeystore.writeBytes(Base64.getDecoder().decode(cleanedKeystoreFile))
+
+                    storeFile = decodedKeystore
+                    storePassword = keystorePassword
+                    this.keyAlias = keyAlias
+                    this.keyPassword = keyPassword
+
+                    println("Release signing configured from environment variables")
+                } catch (e: IllegalArgumentException) {
+                    throw GradleException(
+                        "Failed to decode KEYSTORE_FILE: ${e.message}\n" +
+                            "To encode: base64 -w 0 your-keystore.jks",
+                    )
+                }
+            }
+        } else {
+            println("Release signing not configured (missing environment variables)")
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -116,4 +214,11 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+tasks.register("printVersion") {
+    doLast {
+        println("versionName: ${android.defaultConfig.versionName}")
+        println("versionCode: ${android.defaultConfig.versionCode}")
+    }
 }

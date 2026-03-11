@@ -1,0 +1,136 @@
+name: Tagged Release/Prerelease
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#v}
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION from tag: $TAG_NAME"
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          echo "Release APK built successfully"
+
+      - name: Extract signing certificate fingerprints
+        id: cert
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          CERT_INFO=$(keytool -list -v -keystore app/build/keystore/release.keystore \
+            -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD")
+          SHA256=$(echo "$CERT_INFO" | grep "SHA256:" | awk '{print $2}')
+          SHA1=$(echo "$CERT_INFO" | grep "SHA1:" | awk '{print $2}')
+          if [ -z "$SHA256" ] || [ -z "$SHA1" ]; then
+            echo "::error::Failed to extract certificate fingerprints"
+            exit 1
+          fi
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "sha1=$SHA1" >> $GITHUB_OUTPUT
+          echo "Extracted certificate fingerprints"
+
+      - name: Rename APK with version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          APK_DIR="app/build/outputs/apk/release"
+          cp "$APK_DIR/"*.apk "eridanus-${VERSION}.apk"
+          ls -la eridanus-*.apk
+          echo "Renamed APK"
+
+      - name: Generate SHA256 checksums
+        run: |
+          for apk in eridanus-*.apk; do
+            sha256sum "$apk" > "${apk}.sha256"
+          done
+          echo "Generated SHA256 checksums"
+
+      - name: Read SHA256 checksums
+        id: sha256
+        run: |
+          CHECKSUMS=""
+          for checksum_file in eridanus-*.apk.sha256; do
+            CHECKSUMS="${CHECKSUMS}$(cat "$checksum_file")\n"
+          done
+          echo "checksums<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$CHECKSUMS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            eridanus-*.apk
+            eridanus-*.apk.sha256
+          draft: true
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          body: |
+            ## Eridanus ${{ steps.version.outputs.version }}
+
+            ### Installation
+            Download the APK and install on your Android device (Android 8.0+).
+
+            > **eridanus-${{ steps.version.outputs.version }}.apk** — single universal APK, works on all devices.
+
+            ### Verification
+
+            **Signing Certificate Fingerprints:**
+            ```
+            SHA-256: ${{ steps.cert.outputs.sha256 }}
+            SHA-1:   ${{ steps.cert.outputs.sha1 }}
+            ```
+
+            **SHA256 Checksum:**
+            ```
+            ${{ steps.sha256.outputs.checksums }}
+            ```
+
+            ### What's Changed
+            See the release notes below for details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eridanus-${{ steps.version.outputs.version }}-apk
+          path: eridanus-*.apk
+          retention-days: 30

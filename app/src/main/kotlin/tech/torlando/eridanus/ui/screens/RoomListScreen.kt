@@ -124,7 +124,7 @@ fun RoomListScreen(
                             ),
                         ) {
                             Text(
-                                text = greetingMessage!!,
+                                text = greetingMessage ?: "",
                                 modifier = Modifier.padding(16.dp),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,

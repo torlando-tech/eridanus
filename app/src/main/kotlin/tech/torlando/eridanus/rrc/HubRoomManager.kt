@@ -156,7 +156,7 @@ class HubRoomManager {
         val st = roomState[room] ?: return "(none)"
         val flags = buildString {
             if (st.inviteOnly) append("i")
-            if (st.key != null && st.key!!.isNotEmpty()) append("k")
+            if (!st.key.isNullOrEmpty()) append("k")
             if (st.moderated) append("m")
             if (st.noOutsideMsgs) append("n")
             if (st.isPrivate) append("p")
