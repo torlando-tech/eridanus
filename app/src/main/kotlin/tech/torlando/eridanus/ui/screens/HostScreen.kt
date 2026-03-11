@@ -1,5 +1,6 @@
 package tech.torlando.eridanus.ui.screens
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
@@ -198,13 +199,26 @@ fun HostScreen(viewModel: EridanusViewModel) {
                                 enabled = clientState == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("Connect as Client")
+                                Text("Connect")
                             }
                             OutlinedButton(
                                 onClick = { viewModel.announceHub() },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("Announce Now")
+                                Text("Announce")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val hexHash = hubDestHash?.joinToString("") { "%02x".format(it) } ?: return@OutlinedButton
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, "Connect to my Eridanus hub: $hexHash")
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share Hub Hash"))
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Share")
                             }
                         }
                     }

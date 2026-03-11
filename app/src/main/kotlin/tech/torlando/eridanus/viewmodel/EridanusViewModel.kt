@@ -158,6 +158,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         viewModelScope, SharingStarted.Eagerly, emptyList()
     )
 
+    // Default true to avoid flash while DataStore loads
+    val hasCompletedOnboarding: StateFlow<Boolean> = prefs.hasCompletedOnboarding.stateIn(
+        viewModelScope, SharingStarted.Eagerly, true
+    )
+
     // Identities
     private var hubIdentity: Identity? = null
     private var clientIdentity: Identity? = null
@@ -500,6 +505,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
         viewModelScope.launch { prefs.setHubDefaultRooms(rooms) }
+    }
+
+    fun completeOnboarding() {
+        viewModelScope.launch { prefs.setHasCompletedOnboarding(true) }
     }
 
     fun connectToOwnHub() {

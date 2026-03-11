@@ -24,9 +24,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import tech.torlando.eridanus.ui.screens.ChatScreen
 import tech.torlando.eridanus.ui.screens.HostScreen
 import tech.torlando.eridanus.ui.screens.HubBrowserScreen
+import tech.torlando.eridanus.ui.screens.OnboardingScreen
 import tech.torlando.eridanus.ui.screens.RoomListScreen
 import tech.torlando.eridanus.ui.screens.SettingsScreen
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
@@ -44,14 +47,21 @@ sealed class Screen(
 }
 
 val mainNavigationItems = listOf(
-    Screen.Rooms,
     Screen.Discover,
+    Screen.Rooms,
     Screen.Host,
     Screen.Settings,
 )
 
 @Composable
 fun AppNavigation(viewModel: EridanusViewModel) {
+    val hasCompletedOnboarding by viewModel.hasCompletedOnboarding.collectAsState()
+
+    if (!hasCompletedOnboarding) {
+        OnboardingScreen(viewModel = viewModel)
+        return
+    }
+
     val navController = rememberNavController()
     val navBackStackEntry = navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry.value?.destination
@@ -86,7 +96,7 @@ fun AppNavigation(viewModel: EridanusViewModel) {
     ) { outerPadding ->
         NavHost(
             navController = navController,
-            startDestination = Screen.Rooms.route,
+            startDestination = Screen.Discover.route,
             modifier = Modifier.padding(outerPadding),
             enterTransition = { fadeIn(tween(150)) },
             exitTransition = { fadeOut(tween(75)) },

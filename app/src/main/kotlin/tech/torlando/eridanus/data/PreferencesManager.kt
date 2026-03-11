@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -28,6 +29,7 @@ class PreferencesManager(private val context: Context) {
         private val KEY_HUB_DEFAULT_MODES = stringPreferencesKey("hub_default_modes")
         private val KEY_HUB_DEFAULT_KEY = stringPreferencesKey("hub_default_key")
         private val KEY_HUB_DEFAULT_ROOMS = stringPreferencesKey("hub_default_rooms")
+        private val KEY_HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
     }
 
     val theme: Flow<PresetTheme> = context.dataStore.data.map { prefs ->
@@ -79,6 +81,10 @@ class PreferencesManager(private val context: Context) {
 
     val hubDefaultKey: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[KEY_HUB_DEFAULT_KEY] ?: ""
+    }
+
+    val hasCompletedOnboarding: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HAS_COMPLETED_ONBOARDING] ?: false
     }
 
     val hubDefaultRooms: Flow<List<DefaultRoomConfig>> = context.dataStore.data.map { prefs ->
@@ -163,6 +169,10 @@ class PreferencesManager(private val context: Context) {
             ))
         }
         return emptyList()
+    }
+
+    suspend fun setHasCompletedOnboarding(completed: Boolean) {
+        context.dataStore.edit { it[KEY_HAS_COMPLETED_ONBOARDING] = completed }
     }
 
     suspend fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
