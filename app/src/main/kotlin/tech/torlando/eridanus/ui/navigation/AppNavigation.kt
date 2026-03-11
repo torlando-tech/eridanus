@@ -8,9 +8,22 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -62,6 +75,9 @@ fun AppNavigation(viewModel: EridanusViewModel) {
         return
     }
 
+    val connectedToSharedInstance by viewModel.connectedToSharedInstance.collectAsState()
+    val reticulumStarted by viewModel.reticulumStarted.collectAsState()
+
     val navController = rememberNavController()
     val navBackStackEntry = navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry.value?.destination
@@ -94,40 +110,67 @@ fun AppNavigation(viewModel: EridanusViewModel) {
             }
         },
     ) { outerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Discover.route,
-            modifier = Modifier.padding(outerPadding),
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(75)) },
-            popEnterTransition = { fadeIn(tween(150)) },
-            popExitTransition = { fadeOut(tween(75)) },
-        ) {
-            composable(Screen.Rooms.route) {
-                RoomListScreen(
-                    viewModel = viewModel,
-                    onNavigateToChat = { room ->
-                        viewModel.setCurrentRoom(room)
-                        navController.navigate(Screen.Chat.route)
-                    },
-                )
+        Column(modifier = Modifier.padding(outerPadding)) {
+            if (reticulumStarted && !connectedToSharedInstance) {
+                val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(androidx.compose.material3.MaterialTheme.colorScheme.errorContainer)
+                        .clickable { viewModel.retrySharedInstance() }
+                        .padding(top = statusBarTop + 10.dp, bottom = 10.dp, start = 16.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "No shared instance \u2014 tap to retry",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
             }
-            composable(Screen.Discover.route) {
-                HubBrowserScreen(
-                    viewModel = viewModel,
-                )
-            }
-            composable(Screen.Host.route) {
-                HostScreen(viewModel = viewModel)
-            }
-            composable(Screen.Settings.route) {
-                SettingsScreen(viewModel = viewModel)
-            }
-            composable(Screen.Chat.route) {
-                ChatScreen(
-                    viewModel = viewModel,
-                    onNavigateBack = { navController.popBackStack() },
-                )
+
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Discover.route,
+                modifier = Modifier.weight(1f),
+                enterTransition = { fadeIn(tween(150)) },
+                exitTransition = { fadeOut(tween(75)) },
+                popEnterTransition = { fadeIn(tween(150)) },
+                popExitTransition = { fadeOut(tween(75)) },
+            ) {
+                composable(Screen.Rooms.route) {
+                    RoomListScreen(
+                        viewModel = viewModel,
+                        onNavigateToChat = { room ->
+                            viewModel.setCurrentRoom(room)
+                            navController.navigate(Screen.Chat.route)
+                        },
+                    )
+                }
+                composable(Screen.Discover.route) {
+                    HubBrowserScreen(
+                        viewModel = viewModel,
+                    )
+                }
+                composable(Screen.Host.route) {
+                    HostScreen(viewModel = viewModel)
+                }
+                composable(Screen.Settings.route) {
+                    SettingsScreen(viewModel = viewModel)
+                }
+                composable(Screen.Chat.route) {
+                    ChatScreen(
+                        viewModel = viewModel,
+                        onNavigateBack = { navController.popBackStack() },
+                    )
+                }
             }
         }
     }
