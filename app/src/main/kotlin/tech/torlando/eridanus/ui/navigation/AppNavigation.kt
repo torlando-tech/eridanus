@@ -160,7 +160,16 @@ fun AppNavigation(viewModel: EridanusViewModel) {
                     )
                 }
                 composable(Screen.Host.route) {
-                    HostScreen(viewModel = viewModel)
+                    HostScreen(
+                        viewModel = viewModel,
+                        onNavigateToRooms = {
+                            navController.navigate(Screen.Rooms.route) {
+                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                    )
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(viewModel = viewModel)

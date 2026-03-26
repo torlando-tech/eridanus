@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +69,7 @@ private val MODE_OPTIONS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun HostScreen(viewModel: EridanusViewModel) {
+fun HostScreen(viewModel: EridanusViewModel, onNavigateToRooms: () -> Unit = {}) {
     val hubRunning by viewModel.hubRunning.collectAsState()
     val hubClients by viewModel.hubClients.collectAsState()
     val hubName by viewModel.hubName.collectAsState()
@@ -80,6 +81,17 @@ fun HostScreen(viewModel: EridanusViewModel) {
     val defaultRooms by viewModel.hubDefaultRooms.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+
+    // Navigate to rooms when connection to own hub becomes active
+    var connectingToOwnHub by remember { mutableStateOf(false) }
+    LaunchedEffect(clientState) {
+        if (connectingToOwnHub && clientState == tech.torlando.eridanus.rrc.ClientState.ACTIVE) {
+            connectingToOwnHub = false
+            onNavigateToRooms()
+        } else if (clientState == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED) {
+            connectingToOwnHub = false
+        }
+    }
 
     var localHubName by remember { mutableStateOf(hubName) }
     var localGreeting by remember { mutableStateOf(hubGreeting) }
@@ -195,7 +207,10 @@ fun HostScreen(viewModel: EridanusViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             OutlinedButton(
-                                onClick = { viewModel.connectToOwnHub() },
+                                onClick = {
+                                    connectingToOwnHub = true
+                                    viewModel.connectToOwnHub()
+                                },
                                 enabled = clientState == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED,
                                 modifier = Modifier.weight(1f),
                             ) {
