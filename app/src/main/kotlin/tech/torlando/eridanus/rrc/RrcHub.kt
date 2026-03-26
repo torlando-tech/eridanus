@@ -238,6 +238,7 @@ class RrcHub(
         roomManager.clear()
         defaultRoomInitialized = false
         _connectedClients.value = 0
+        destination?.let { Transport.deregisterDestination(it) }
         destination = null
         Log.i(TAG, "Hub stopped")
     }
@@ -245,6 +246,7 @@ class RrcHub(
     private fun initDefaultRoom() {
         if (defaultRoomInitialized) return
         defaultRoomInitialized = true
+        Log.i(TAG, "initDefaultRoom: ${defaultRooms.size} default rooms configured")
         if (defaultRooms.isEmpty()) return
 
         for (cfg in defaultRooms) {

@@ -92,6 +92,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     val connectedToSharedInstance: StateFlow<Boolean> = _connectedToSharedInstance
 
     // Client state
+    private var clientEventJob: kotlinx.coroutines.Job? = null
     private var rrcClient: RrcClient? = null
     private val _clientState = MutableStateFlow(tech.torlando.eridanus.rrc.ClientState.DISCONNECTED)
     val clientState: StateFlow<tech.torlando.eridanus.rrc.ClientState> = _clientState
@@ -337,6 +338,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     fun connectToHub(hubHash: ByteArray) {
         val id = clientIdentity ?: return
         _connectionError.value = null
+        clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 EridanusConnectionService.start(getApplication())
@@ -345,7 +347,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
                 // Collect events
-                launch {
+                clientEventJob = launch {
                     client.events.collect { event ->
                         handleRrcEvent(event)
                     }
@@ -378,6 +380,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun disconnectFromHub() {
+        clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             rrcClient?.disconnect()
             rrcClient = null
@@ -569,6 +572,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
         Log.i(TAG, "connectToOwnHub: hash=${hash.joinToString("") { "%02x".format(it) }}")
         _connectionError.value = null
+        clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 EridanusConnectionService.start(getApplication())
@@ -576,7 +580,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
-                launch {
+                clientEventJob = launch {
                     client.events.collect { event ->
                         handleRrcEvent(event)
                     }
@@ -671,9 +675,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private fun handleRrcEvent(event: RrcEvent) {
         when (event) {
             is RrcEvent.Welcome -> {
-                Log.d(TAG, "Welcome: hubName=${event.hubName}")
+                Log.i(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
+                Log.i(TAG, "Requesting room list after welcome")
                 requestRoomList()
             }
 
@@ -733,7 +738,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             }
 
             is RrcEvent.NoticeReceived -> {
-                Log.d(TAG, "NoticeReceived: room=${event.room} body='${event.body}'")
+                Log.i(TAG, "NoticeReceived: room=${event.room} body='${event.body}'")
                 if (event.room == null) {
                     // Parse room list from either Ara hub ("Registered public rooms:")
                     // or Python rrc-nomadnet hub ("Rooms:")
@@ -753,6 +758,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                                 topic = parts.getOrNull(1)?.trim(),
                             )
                         }
+                        Log.i(TAG, "Parsed ${rooms.size} available rooms: ${rooms.map { it.name }}")
                         _availableRooms.value = rooms
                         _currentRoom.value?.let { displayRoom ->
                             addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
@@ -761,6 +767,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     } else if (event.body == "No public rooms registered" ||
                                event.body == "no rooms"
                     ) {
+                        Log.i(TAG, "No rooms registered on hub")
                         _availableRooms.value = emptyList()
                         _currentRoom.value?.let { displayRoom ->
                             addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
@@ -824,6 +831,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             }
 
             is RrcEvent.Disconnected -> {
+                Log.i(TAG, "Disconnected event received, clearing rooms")
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
                 _connectedHubName.value = null
                 _joinedRooms.value = emptySet()
