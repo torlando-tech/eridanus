@@ -1,4 +1,6 @@
-<img src="./eridanus-icon.svg" width="200" height="200" alt="Eridanus" />
+<p align="center">
+  <img src="./eridanus-icon.svg" width="200" height="200" alt="Eridanus" />
+</p>
 
 # Eridanus
 
