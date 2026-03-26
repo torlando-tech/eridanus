@@ -10,10 +10,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -159,11 +164,25 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                     )
                 }
             } else {
+                val starred = discoveredHubs.filter { it.starred }
+                val unstarred = discoveredHubs.filter { !it.starred }
+
                 LazyColumn(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    items(discoveredHubs) { hub ->
+                    if (starred.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Favorites",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(
+                                    start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp,
+                                ),
+                            )
+                        }
+                        items(starred) { hub ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -172,10 +191,17 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                IconButton(onClick = { viewModel.toggleHubStar(hub.hexHash) }) {
+                                    Icon(
+                                        imageVector = if (hub.starred) Icons.Default.Star else Icons.Default.StarBorder,
+                                        contentDescription = if (hub.starred) "Unstar" else "Star",
+                                        tint = if (hub.starred) MaterialTheme.colorScheme.primary
+                                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = hub.name,
@@ -195,6 +221,61 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 }
                             }
                         }
+                    }
+                    }
+                    if (unstarred.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = if (starred.isNotEmpty()) "Discovered" else "Discovered Hubs",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(
+                                    start = 16.dp, end = 16.dp,
+                                    top = if (starred.isNotEmpty()) 16.dp else 8.dp,
+                                    bottom = 4.dp,
+                                ),
+                            )
+                        }
+                        items(unstarred) { hub ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                IconButton(onClick = { viewModel.toggleHubStar(hub.hexHash) }) {
+                                    Icon(
+                                        imageVector = if (hub.starred) Icons.Default.Star else Icons.Default.StarBorder,
+                                        contentDescription = if (hub.starred) "Unstar" else "Star",
+                                        tint = if (hub.starred) MaterialTheme.colorScheme.primary
+                                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = hub.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    Text(
+                                        text = hub.hexHash.take(16) + "...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Button(
+                                    onClick = { viewModel.connectToHub(hub.hash) },
+                                    enabled = !isConnected && !isConnecting,
+                                ) {
+                                    Text(if (isConnecting) "Connecting..." else "Connect")
+                                }
+                            }
+                        }
+                    }
                     }
                 }
             }

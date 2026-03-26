@@ -9,6 +9,7 @@ data class HubEntity(
     val hash: ByteArray,
     val name: String,
     val lastSeen: Long,
+    val starred: Boolean = false,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

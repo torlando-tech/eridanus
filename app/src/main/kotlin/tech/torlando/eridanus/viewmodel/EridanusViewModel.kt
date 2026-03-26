@@ -41,6 +41,7 @@ data class DiscoveredHub(
     val hash: ByteArray,
     val name: String,
     val lastSeen: Long = System.currentTimeMillis(),
+    val starred: Boolean = false,
 ) {
     val hexHash: String get() = hash.joinToString("") { "%02x".format(it) }
 }
@@ -133,7 +134,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     // Hub browser (persisted via Room)
     val discoveredHubs: StateFlow<List<DiscoveredHub>> = hubDao.observeAll()
         .map { entities ->
-            entities.map { DiscoveredHub(hash = it.hash, name = it.name, lastSeen = it.lastSeen) }
+            entities.map { DiscoveredHub(hash = it.hash, name = it.name, lastSeen = it.lastSeen, starred = it.starred) }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -324,14 +325,19 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val hexHash = hashCopy.joinToString("") { "%02x".format(it) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            hubDao.upsert(
-                HubEntity(
-                    hexHash = hexHash,
-                    hash = hashCopy,
-                    name = hubName,
-                    lastSeen = System.currentTimeMillis(),
+            val existing = hubDao.getByHash(hexHash)
+            if (existing != null) {
+                hubDao.updateNameAndLastSeen(hexHash, hubName, System.currentTimeMillis())
+            } else {
+                hubDao.insert(
+                    HubEntity(
+                        hexHash = hexHash,
+                        hash = hashCopy,
+                        name = hubName,
+                        lastSeen = System.currentTimeMillis(),
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -610,6 +616,12 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun announceHub() {
         rrcHub?.announce()
+    }
+
+    fun toggleHubStar(hexHash: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            hubDao.toggleStarred(hexHash)
+        }
     }
 
     fun setAnnounceInterval(seconds: Int) {
