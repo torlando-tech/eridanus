@@ -38,6 +38,11 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION from tag: $TAG_NAME"
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
       - name: Build Release APK
         env:
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
@@ -47,6 +52,15 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
           echo "Release APK built successfully"
+
+      - name: Verify critical classes survive R8 minification
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No release APK found!"
+            exit 1
+          fi
+          python scripts/verify_r8_keeps.py "$APK_PATH"
 
       - name: Extract signing certificate fingerprints
         id: cert
