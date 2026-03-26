@@ -133,6 +133,16 @@ fun RoomListScreen(
                     }
                 }
                 if (joinedRooms.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Joined Rooms",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp,
+                            ),
+                        )
+                    }
                     items(joinedRooms.toList().sorted()) { room ->
                         val unread = unreadCounts[room] ?: 0
                         var showMenu by remember { mutableStateOf(false) }
