@@ -183,6 +183,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     ?: Identity.create().also { identityStore.saveClientIdentity(it) }
 
                 _reticulumStarted.value = true
+                EridanusConnectionService.start(getApplication())
 
                 // Now try to connect to shared instance manually (like Carina does)
                 val connected = tryConnectSharedInstance()
