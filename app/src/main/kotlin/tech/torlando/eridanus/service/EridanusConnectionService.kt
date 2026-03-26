@@ -19,6 +19,10 @@ class EridanusConnectionService : Service() {
     companion object {
         private const val CHANNEL_ID = "eridanus_connection"
         private const val NOTIFICATION_ID = 1
+        private const val EXTRA_TEXT = "text"
+
+        private var instance: EridanusConnectionService? = null
+        private var pendingText: String? = null
 
         fun start(context: Context) {
             val intent = Intent(context, EridanusConnectionService::class.java)
@@ -28,15 +32,37 @@ class EridanusConnectionService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, EridanusConnectionService::class.java))
         }
+
+        fun updateStatus(text: String) {
+            val svc = instance
+            if (svc != null) {
+                svc.updateNotification(text)
+            } else {
+                pendingText = text
+            }
+        }
     }
+
+    private var currentText = "Starting\u2026"
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
+        pendingText?.let {
+            currentText = it
+            pendingText = null
+        }
+    }
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
+        intent?.getStringExtra(EXTRA_TEXT)?.let { currentText = it }
+        val notification = buildNotification(currentText)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
@@ -46,6 +72,13 @@ class EridanusConnectionService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun updateNotification(text: String) {
+        currentText = text
+        val notification = buildNotification(text)
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification)
+    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -59,7 +92,7 @@ class EridanusConnectionService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(text: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
@@ -67,7 +100,7 @@ class EridanusConnectionService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Eridanus")
-            .setContentText("Connected to Reticulum network")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setOngoing(true)

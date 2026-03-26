@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -169,6 +170,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     init {
         initReticulum()
+        observeNotificationStatus()
     }
 
     private fun initReticulum() {
@@ -193,6 +195,46 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 registerAnnounceHandler()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start Reticulum", e)
+            }
+        }
+    }
+
+    private fun observeNotificationStatus() {
+        viewModelScope.launch {
+            combine(
+                _reticulumStarted,
+                _connectedToSharedInstance,
+                _hubRunning,
+                _hubClients,
+                _clientState,
+                discoveredHubs,
+            ) { args ->
+                @Suppress("UNCHECKED_CAST")
+                val started = args[0] as Boolean
+                val sharedInstance = args[1] as Boolean
+                val hosting = args[2] as Boolean
+                val clients = args[3] as Int
+                val client = args[4] as tech.torlando.eridanus.rrc.ClientState
+                val hubs = args[5] as List<DiscoveredHub>
+
+                when {
+                    !started -> "Starting\u2026"
+                    hosting && client == tech.torlando.eridanus.rrc.ClientState.ACTIVE ->
+                        "Hosting hub \u00b7 $clients connected \u00b7 joined a hub"
+                    hosting ->
+                        "Hosting hub \u00b7 $clients connected"
+                    client == tech.torlando.eridanus.rrc.ClientState.ACTIVE ->
+                        "Connected to hub"
+                    client == tech.torlando.eridanus.rrc.ClientState.CONNECTING ||
+                    client == tech.torlando.eridanus.rrc.ClientState.AWAITING_WELCOME ->
+                        "Connecting to hub\u2026"
+                    hubs.isNotEmpty() ->
+                        "${hubs.size} hub${if (hubs.size == 1) "" else "s"} discovered"
+                    sharedInstance -> "Listening via shared instance"
+                    else -> "Listening (standalone)"
+                }
+            }.collect { text ->
+                EridanusConnectionService.updateStatus(text)
             }
         }
     }
