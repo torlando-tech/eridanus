@@ -11,3 +11,12 @@
 /reticulum-kt/rns-android/build
 /reticulum-kt/rns-core/build
 /reticulum-kt/rns-interfaces/build
+
+# Signing and credentials
+*.jks
+*.keystore
+*.pem
+*.p12
+*.env
+.env*
+google-services.json
