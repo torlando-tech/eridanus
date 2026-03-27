@@ -134,6 +134,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     // Hub browser (persisted via Room)
     val discoveredHubs: StateFlow<List<DiscoveredHub>> = hubDao.observeAll()
         .map { entities ->
+            Log.d(TAG, "Hub flow emitted: ${entities.map { "${it.name}:starred=${it.starred}" }}")
             entities.map { DiscoveredHub(hash = it.hash, name = it.name, lastSeen = it.lastSeen, starred = it.starred) }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -325,19 +326,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val hexHash = hashCopy.joinToString("") { "%02x".format(it) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val existing = hubDao.getByHash(hexHash)
-            if (existing != null) {
-                hubDao.updateNameAndLastSeen(hexHash, hubName, System.currentTimeMillis())
-            } else {
-                hubDao.insert(
-                    HubEntity(
-                        hexHash = hexHash,
-                        hash = hashCopy,
-                        name = hubName,
-                        lastSeen = System.currentTimeMillis(),
-                    )
-                )
-            }
+            hubDao.upsertPreserveStarred(hexHash, hashCopy, hubName, System.currentTimeMillis())
         }
     }
 
@@ -619,8 +608,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleHubStar(hexHash: String) {
+        Log.i(TAG, "toggleHubStar: $hexHash")
         viewModelScope.launch(Dispatchers.IO) {
             hubDao.toggleStarred(hexHash)
+            Log.i(TAG, "toggleStarred done for $hexHash")
         }
     }
 

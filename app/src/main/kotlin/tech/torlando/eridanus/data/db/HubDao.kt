@@ -10,14 +10,11 @@ interface HubDao {
     @Query("SELECT * FROM discovered_hubs ORDER BY starred DESC, lastSeen DESC")
     fun observeAll(): Flow<List<HubEntity>>
 
-    @Upsert
-    suspend fun insert(hub: HubEntity)
-
-    @Query("SELECT * FROM discovered_hubs WHERE hexHash = :hexHash")
-    suspend fun getByHash(hexHash: String): HubEntity?
-
-    @Query("UPDATE discovered_hubs SET name = :name, lastSeen = :lastSeen WHERE hexHash = :hexHash")
-    suspend fun updateNameAndLastSeen(hexHash: String, name: String, lastSeen: Long)
+    @Query(
+        "INSERT INTO discovered_hubs (hexHash, hash, name, lastSeen, starred) VALUES (:hexHash, :hash, :name, :lastSeen, 0) " +
+        "ON CONFLICT(hexHash) DO UPDATE SET name = :name, lastSeen = :lastSeen"
+    )
+    suspend fun upsertPreserveStarred(hexHash: String, hash: ByteArray, name: String, lastSeen: Long)
 
     @Query("UPDATE discovered_hubs SET starred = NOT starred WHERE hexHash = :hexHash")
     suspend fun toggleStarred(hexHash: String)

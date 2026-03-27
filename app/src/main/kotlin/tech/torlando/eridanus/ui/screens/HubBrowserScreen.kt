@@ -12,7 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -182,46 +182,16 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 ),
                             )
                         }
-                        items(starred) { hub ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                IconButton(onClick = { viewModel.toggleHubStar(hub.hexHash) }) {
-                                    Icon(
-                                        imageVector = if (hub.starred) Icons.Default.Star else Icons.Default.StarBorder,
-                                        contentDescription = if (hub.starred) "Unstar" else "Star",
-                                        tint = if (hub.starred) MaterialTheme.colorScheme.primary
-                                               else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = hub.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                    Text(
-                                        text = hub.hexHash.take(16) + "...",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Button(
-                                    onClick = { viewModel.connectToHub(hub.hash) },
-                                    enabled = !isConnected && !isConnecting,
-                                ) {
-                                    Text(if (isConnecting) "Connecting..." else "Connect")
-                                }
-                            }
+                        items(starred, key = { "starred_${it.hexHash}" }) { hub ->
+                            HubCard(
+                                hub = hub,
+                                isStarred = true,
+                                onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
+                                onConnect = { viewModel.connectToHub(hub.hash) },
+                                connectEnabled = !isConnected && !isConnecting,
+                                connectLabel = if (isConnecting) "Connecting..." else "Connect",
+                            )
                         }
-                    }
                     }
                     if (unstarred.isNotEmpty()) {
                         item {
@@ -236,46 +206,16 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 ),
                             )
                         }
-                        items(unstarred) { hub ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                IconButton(onClick = { viewModel.toggleHubStar(hub.hexHash) }) {
-                                    Icon(
-                                        imageVector = if (hub.starred) Icons.Default.Star else Icons.Default.StarBorder,
-                                        contentDescription = if (hub.starred) "Unstar" else "Star",
-                                        tint = if (hub.starred) MaterialTheme.colorScheme.primary
-                                               else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = hub.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                    Text(
-                                        text = hub.hexHash.take(16) + "...",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Button(
-                                    onClick = { viewModel.connectToHub(hub.hash) },
-                                    enabled = !isConnected && !isConnecting,
-                                ) {
-                                    Text(if (isConnecting) "Connecting..." else "Connect")
-                                }
-                            }
+                        items(unstarred, key = { "unstarred_${it.hexHash}" }) { hub ->
+                            HubCard(
+                                hub = hub,
+                                isStarred = false,
+                                onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
+                                onConnect = { viewModel.connectToHub(hub.hash) },
+                                connectEnabled = !isConnected && !isConnecting,
+                                connectLabel = if (isConnecting) "Connecting..." else "Connect",
+                            )
                         }
-                    }
                     }
                 }
             }
@@ -319,6 +259,55 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                     }
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun HubCard(
+    hub: tech.torlando.eridanus.viewmodel.DiscoveredHub,
+    isStarred: Boolean,
+    onToggleStar: () -> Unit,
+    onConnect: () -> Unit,
+    connectEnabled: Boolean,
+    connectLabel: String,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggleStar) {
+                Icon(
+                    imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+                    contentDescription = if (isStarred) "Unstar" else "Star",
+                    tint = if (isStarred) MaterialTheme.colorScheme.primary
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = hub.name,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = hub.hexHash.take(16) + "...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(
+                onClick = onConnect,
+                enabled = connectEnabled,
+            ) {
+                Text(connectLabel)
+            }
         }
     }
 }
