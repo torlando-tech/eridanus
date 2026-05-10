@@ -2,8 +2,8 @@ import java.util.Base64
 
 plugins {
     id("com.android.application")
-    kotlin("android")
-    kotlin("plugin.serialization") version "1.9.22"
+    kotlin("plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
 
@@ -58,12 +58,12 @@ val (versionCodeValue, versionNameValue) = getVersionFromTag()
 
 android {
     namespace = "tech.torlando.eridanus"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "tech.torlando.eridanus"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = versionCodeValue
         versionName = versionNameValue
 
@@ -137,16 +137,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
         compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     packaging {
@@ -157,8 +155,8 @@ android {
 }
 
 dependencies {
-    // Reticulum (resolved from includeBuild composite)
-    implementation("network.reticulum:rns-android")
+    // Reticulum (resolved from includeBuild composite at reticulum-kt/)
+    implementation("com.github.torlando-tech.reticulum-kt:rns-android")
 
     // CBOR encoding (RRC protocol uses CBOR)
     implementation("co.nstant.in:cbor:0.9")
@@ -188,9 +186,9 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // Room
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // Encrypted storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
