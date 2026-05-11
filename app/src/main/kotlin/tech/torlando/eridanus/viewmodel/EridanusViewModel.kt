@@ -18,9 +18,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import network.reticulum.Reticulum
+import network.reticulum.android.ReticulumConfig
+import network.reticulum.android.ReticulumService
 import network.reticulum.identity.Identity
-import network.reticulum.interfaces.InterfaceAdapter
-import network.reticulum.interfaces.local.LocalClientInterface
 import network.reticulum.transport.AnnounceHandler
 import network.reticulum.transport.Transport
 import tech.torlando.eridanus.data.DarkModeOption
@@ -179,22 +179,45 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Start Reticulum in standalone mode first
-                val reticulum = Reticulum.start()
+                // Bring up Reticulum via the rns-android foreground service.
+                // The service resolves configDir against the app's filesDir,
+                // wires Room-backed IdentityStore / PathStore / AnnounceStore
+                // (so known_destinations / ratchets / announce-cache stay in
+                // SQLite instead of /.reticulum/* on root fs — which the old
+                // direct `Reticulum.start()` path silently fell back to on
+                // Android because `user.home` is empty), and auto-detects
+                // an existing shared instance on the configured port:
+                //   - If a shared instance is running (e.g. rnsd on the Mac
+                //     via `adb reverse tcp:37428 tcp:37428`) we attach as a
+                //     CLIENT through that SharedInstance.
+                //   - Otherwise we BECOME the shared instance server so any
+                //     sibling process on this device (Columba, the rns CLI)
+                //     can attach to us. Default shareInstance=true is fine
+                //     for both eridanus-only and multi-app setups.
+                ReticulumService.start(getApplication(), ReticulumConfig())
+
+                // Service init kicks off Reticulum.start(...) + interface
+                // bring-up on a background thread; give it a beat before
+                // we read identityStore. ReticulumService.getInstance()
+                // returns null until onCreate runs, then non-null forever
+                // (single-instance service). 2s mirrors carina's window.
+                kotlinx.coroutines.delay(2000)
 
                 hubIdentity = identityStore.loadHubIdentity()
                     ?: Identity.create().also { identityStore.saveHubIdentity(it) }
                 clientIdentity = identityStore.loadClientIdentity()
                     ?: Identity.create().also { identityStore.saveClientIdentity(it) }
 
-                _reticulumStarted.value = true
+                val service = ReticulumService.getInstance()
+                _reticulumStarted.value = service?.isRunning() == true
+                _connectedToSharedInstance.value =
+                    service?.getReticulum()?.connectToSharedInstance == true
+                Log.i(
+                    TAG,
+                    "Reticulum started (shared instance: ${_connectedToSharedInstance.value})"
+                )
+
                 EridanusConnectionService.start(getApplication())
-
-                // Now try to connect to shared instance manually (like Carina does)
-                val connected = tryConnectSharedInstance()
-                _connectedToSharedInstance.value = connected
-                Log.i(TAG, "Reticulum started (shared instance: $connected)")
-
                 registerAnnounceHandler()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start Reticulum", e)
@@ -244,33 +267,27 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun retrySharedInstance() {
         viewModelScope.launch(Dispatchers.IO) {
-            val connected = tryConnectSharedInstance()
+            // rns-android's ReticulumService picks the shared-instance role
+            // (client-of-existing vs server) at startup based on whether a
+            // listener is already bound on the configured port. To "retry"
+            // we ask it to re-probe by reconnecting its interfaces; if a
+            // shared instance has since appeared on the port (e.g. rnsd
+            // came up after the app started, or adb reverse was set up
+            // late) the rebuilt LocalClientInterface will attach this time.
+            val service = ReticulumService.getInstance()
+            if (service == null) {
+                Log.w(TAG, "Retry shared instance: service not yet running")
+                _connectedToSharedInstance.value = false
+                return@launch
+            }
+            service.reconnectInterfaces()
+            kotlinx.coroutines.delay(500)
+            val connected = service.getReticulum()?.connectToSharedInstance == true
             _connectedToSharedInstance.value = connected
             if (connected) {
                 registerAnnounceHandler()
             }
             Log.i(TAG, "Retry shared instance: connected=$connected")
-        }
-    }
-
-    private fun tryConnectSharedInstance(): Boolean {
-        val port = 37428
-        if (!Reticulum.isSharedInstanceRunning(port)) {
-            Log.w(TAG, "No shared instance on port $port")
-            return false
-        }
-        return try {
-            val client = LocalClientInterface(
-                name = "SharedInstanceClient",
-                tcpPort = port,
-            )
-            client.start()
-            Transport.registerInterface(InterfaceAdapter.getOrCreate(client))
-            Log.i(TAG, "Connected to shared instance on port $port")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to connect to shared instance", e)
-            false
         }
     }
 
