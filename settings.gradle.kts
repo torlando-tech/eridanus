@@ -11,11 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "eridanus"
 
 include(":app")
-
-includeBuild("reticulum-kt")
