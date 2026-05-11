@@ -1,27 +1,15 @@
 package tech.torlando.eridanus
 
 import android.app.Application
-import android.app.NotificationChannel
-import android.app.NotificationManager
 
 class EridanusApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels()
-    }
-
-    private fun createNotificationChannels() {
-        val channel = NotificationChannel(
-            ReticulumService.CHANNEL_ID,
-            "Reticulum Service",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "Keeps Eridanus listening for hub announces in the background"
-            setShowBadge(false)
-        }
-
-        getSystemService(NotificationManager::class.java)
-            ?.createNotificationChannel(channel)
+        // Notification channels are created lazily by their owning services:
+        //   - `network.reticulum.android.ReticulumService` creates the "reticulum"
+        //     channel for the rns-android foreground service in its onCreate().
+        //   - `tech.torlando.eridanus.service.EridanusConnectionService` creates
+        //     "eridanus_connection" for app-domain status updates.
     }
 }
