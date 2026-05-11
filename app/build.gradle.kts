@@ -156,7 +156,7 @@ android {
 
 dependencies {
     // Reticulum (published to JitPack from torlando-tech/reticulum-kt)
-    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.18")
+    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.19")
 
     // CBOR encoding (RRC protocol uses CBOR)
     implementation("co.nstant.in:cbor:0.9")
