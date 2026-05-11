@@ -21,7 +21,7 @@ Eridanus is an Android app that lets you create and join chatrooms on the Reticu
 
 Download the latest release from [Releases](https://github.com/torlando-tech/eridanus/releases) and install on your Android device.
 
-You'll need a way to connect to the Reticulum network. The easiest option is [Sideband](https://github.com/markqvist/Sideband) running on the same device, or you can configure a shared Reticulum instance via [Carina](https://github.com/torlando-tech/carina). If you already have RNS running on your device, Eridanus can connect to it directly.
+**Eridanus requires a shared Reticulum instance on your phone, so you'll need a way to connect to the Reticulum network.** The most reliable option is [Sideband](https://github.com/markqvist/Sideband) running on the same device, with the Shared Instance option enabled. If you're feeling more adventurous, you can try [Reticulum for Android](https://github.com/torlando-tech/reticulum-android) which provides a configuration UI for the reference python implementation of Reticulum, or if you really like living on the edge, you can try [Carina](https://github.com/torlando-tech/carina), which uses the experimental kotlin implementation of Reticulum, [reticulum-kt](https://github.com/torlando-tech/reticulum-kt). If you already have RNS running on your device, Eridanus can connect to it directly.
 
 ## About Reticulum
 
