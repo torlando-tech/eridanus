@@ -186,15 +186,31 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 // SQLite instead of /.reticulum/* on root fs — which the old
                 // direct `Reticulum.start()` path silently fell back to on
                 // Android because `user.home` is empty), and auto-detects
-                // an existing shared instance on the configured port:
-                //   - If a shared instance is running (e.g. rnsd on the Mac
-                //     via `adb reverse tcp:37428 tcp:37428`) we attach as a
-                //     CLIENT through that SharedInstance.
-                //   - Otherwise we BECOME the shared instance server so any
-                //     sibling process on this device (Columba, the rns CLI)
-                //     can attach to us. Default shareInstance=true is fine
-                //     for both eridanus-only and multi-app setups.
-                ReticulumService.start(getApplication(), ReticulumConfig())
+                // an existing shared instance on the configured port.
+                //
+                // shareInstance = false: Eridanus is a chat client with no UI
+                // for configuring Reticulum interfaces. If we became the
+                // shared-instance server, our Reticulum would have no path
+                // to the outside world, and any sibling process that attached
+                // to us (Sideband, Carina, the rns CLI) would also be cut off
+                // — they'd see their own outbound interfaces disabled in
+                // client mode and rely on ours, which is empty. The role
+                // inversion is silent and easy to fall into whenever Eridanus
+                // happens to start before whatever app is supposed to host
+                // the network stack on the device.
+                //
+                // So we explicitly opt out of ever hosting. ReticulumService
+                // will only attach as a client when a shared instance is
+                // already running on 37428 (typically Sideband, Caelum, or
+                // a python "Reticulum for Android" daemon); otherwise it
+                // runs Reticulum standalone with no interfaces — which is
+                // also non-functional, but at least non-functional in a way
+                // the user can fix by starting their shared-instance host
+                // app, rather than poisoning every other app on the device.
+                ReticulumService.start(
+                    getApplication(),
+                    ReticulumConfig(shareInstance = false),
+                )
 
                 // Service init kicks off Reticulum.start(...) + interface
                 // bring-up on a background thread; give it a beat before
