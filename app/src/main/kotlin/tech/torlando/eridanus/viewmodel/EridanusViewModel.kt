@@ -9,6 +9,7 @@ import co.nstant.`in`.cbor.model.Map as CborMap
 import co.nstant.`in`.cbor.model.UnicodeString
 import co.nstant.`in`.cbor.model.UnsignedInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,7 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import network.reticulum.Reticulum
 import network.reticulum.android.ReticulumConfig
 import network.reticulum.android.ReticulumService
@@ -63,6 +67,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val TAG = "EridanusViewModel"
+        private const val WATCHDOG_INTERVAL_MS = 10_000L
     }
 
     private val prefs = PreferencesManager(application)
@@ -171,6 +176,17 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private var hubIdentity: Identity? = null
     private var clientIdentity: Identity? = null
 
+    // Reticulum lifecycle coordination.
+    // - restartMutex serializes teardown+restart so the auto-recovery watchdog
+    //   and the user-driven retry button never race each other to recreate
+    //   the service.
+    // - watchdogJob is the periodic probe that detects when the
+    //   shared-instance host on 127.0.0.1:37428 appears (we started without
+    //   one) or disappears (host died after we attached), and re-runs the
+    //   attach probe so the user never has to think about launch order.
+    private val restartMutex = Mutex()
+    private var watchdogJob: Job? = null
+
     init {
         initReticulum()
         observeNotificationStatus()
@@ -178,65 +194,185 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // Bring up Reticulum via the rns-android foreground service.
-                // The service resolves configDir against the app's filesDir,
-                // wires Room-backed IdentityStore / PathStore / AnnounceStore
-                // (so known_destinations / ratchets / announce-cache stay in
-                // SQLite instead of /.reticulum/* on root fs — which the old
-                // direct `Reticulum.start()` path silently fell back to on
-                // Android because `user.home` is empty), and auto-detects
-                // an existing shared instance on the configured port.
-                //
-                // shareInstance = false: Eridanus is a chat client with no UI
-                // for configuring Reticulum interfaces. If we became the
-                // shared-instance server, our Reticulum would have no path
-                // to the outside world, and any sibling process that attached
-                // to us (Sideband, Carina, the rns CLI) would also be cut off
-                // — they'd see their own outbound interfaces disabled in
-                // client mode and rely on ours, which is empty. The role
-                // inversion is silent and easy to fall into whenever Eridanus
-                // happens to start before whatever app is supposed to host
-                // the network stack on the device.
-                //
-                // So we explicitly opt out of ever hosting. ReticulumService
-                // will only attach as a client when a shared instance is
-                // already running on 37428 (typically Sideband, Caelum, or
-                // a python "Reticulum for Android" daemon); otherwise it
-                // runs Reticulum standalone with no interfaces — which is
-                // also non-functional, but at least non-functional in a way
-                // the user can fix by starting their shared-instance host
-                // app, rather than poisoning every other app on the device.
-                ReticulumService.start(
-                    getApplication(),
-                    ReticulumConfig(shareInstance = false),
-                )
+            bringUpReticulum()
+            EridanusConnectionService.start(getApplication())
+            startSharedInstanceWatchdog()
+        }
+    }
 
-                // Service init kicks off Reticulum.start(...) + interface
-                // bring-up on a background thread; give it a beat before
-                // we read identityStore. ReticulumService.getInstance()
-                // returns null until onCreate runs, then non-null forever
-                // (single-instance service). 2s mirrors carina's window.
-                kotlinx.coroutines.delay(2000)
+    /**
+     * Drive the rns-android ReticulumService through one full bring-up cycle
+     * and reflect the result into [_reticulumStarted] / [_connectedToSharedInstance].
+     *
+     * Idempotent: if a service is already running with the same config it's
+     * effectively a no-op (the foreground-service intent re-delivers but
+     * Reticulum.start short-circuits via its `started` CAS guard). Use
+     * [restartReticulum] when you need a fresh probe — that's the path that
+     * tears down the service first so the probe actually re-runs.
+     */
+    private suspend fun bringUpReticulum() {
+        try {
+            // Bring up Reticulum via the rns-android foreground service.
+            // The service resolves configDir against the app's filesDir,
+            // wires Room-backed IdentityStore / PathStore / AnnounceStore
+            // (so known_destinations / ratchets / announce-cache stay in
+            // SQLite instead of /.reticulum/* on root fs — which the old
+            // direct `Reticulum.start()` path silently fell back to on
+            // Android because `user.home` is empty), and auto-detects
+            // an existing shared instance on the configured port.
+            //
+            // shareInstance = false: Eridanus is a chat client with no UI
+            // for configuring Reticulum interfaces. If we became the
+            // shared-instance server, our Reticulum would have no path
+            // to the outside world, and any sibling process that attached
+            // to us (Sideband, Carina, the rns CLI) would also be cut off
+            // — they'd see their own outbound interfaces disabled in
+            // client mode and rely on ours, which is empty. So we
+            // explicitly opt out of ever hosting; the
+            // [startSharedInstanceWatchdog] loop re-drives the probe if a
+            // host comes up after Eridanus does.
+            ReticulumService.start(
+                getApplication(),
+                ReticulumConfig(shareInstance = false),
+            )
 
+            // Service init kicks off Reticulum.start(...) + interface
+            // bring-up on a background thread; give it a beat before
+            // we read identityStore. ReticulumService.getInstance()
+            // returns null until onCreate runs, then non-null forever
+            // (single-instance service). 2s mirrors carina's window.
+            delay(2000)
+
+            // Identities are persistent across restarts; only generate on
+            // first ever start. Subsequent restartReticulum() cycles reuse
+            // the same identities.
+            if (hubIdentity == null) {
                 hubIdentity = identityStore.loadHubIdentity()
                     ?: Identity.create().also { identityStore.saveHubIdentity(it) }
+            }
+            if (clientIdentity == null) {
                 clientIdentity = identityStore.loadClientIdentity()
                     ?: Identity.create().also { identityStore.saveClientIdentity(it) }
+            }
 
-                val service = ReticulumService.getInstance()
-                _reticulumStarted.value = service?.isRunning() == true
-                _connectedToSharedInstance.value =
-                    service?.getReticulum()?.connectToSharedInstance == true
-                Log.i(
-                    TAG,
-                    "Reticulum started (shared instance: ${_connectedToSharedInstance.value})"
-                )
+            val service = ReticulumService.getInstance()
+            _reticulumStarted.value = service?.isRunning() == true
+            // `isConnectedToSharedInstance` is the runtime result of the
+            // probe inside tryConnectToSharedInstance, not the constructor
+            // intent (`connectToSharedInstance`). The intent was set to
+            // `sharedInstanceExists` based on a port probe in rns-android;
+            // the runtime flag confirms whether the LocalClientInterface
+            // actually came up. Use the runtime flag so the watchdog
+            // doesn't loop on a half-attached state.
+            _connectedToSharedInstance.value =
+                service?.getReticulum()?.isConnectedToSharedInstance == true
+            Log.i(
+                TAG,
+                "Reticulum started (shared instance: ${_connectedToSharedInstance.value})"
+            )
 
-                EridanusConnectionService.start(getApplication())
+            if (_connectedToSharedInstance.value) {
                 registerAnnounceHandler()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start Reticulum", e)
+        }
+    }
+
+    /**
+     * Tear the running [ReticulumService] all the way down, then bring it
+     * back up. This is the only way to re-run rns-android's startup probe
+     * for an existing shared-instance host on 127.0.0.1:37428 — the service
+     * decides its role (attach-as-client vs run-standalone) exactly once at
+     * onStartCommand and there's no in-place "rebind" hook today. Used by:
+     *
+     *   - The user-driven "Retry" banner button when no shared instance
+     *     was detected at startup but they've since launched a host app.
+     *   - [startSharedInstanceWatchdog] which polls the port and triggers
+     *     this automatically when topology changes (host appears,
+     *     disappears, or is replaced).
+     *
+     * Serialized via [restartMutex] so concurrent watchdog ticks + retry
+     * taps never collide.
+     */
+    private suspend fun restartReticulum() {
+        restartMutex.withLock {
+            try {
+                Log.i(TAG, "Tearing down Reticulum to re-trigger shared-instance probe")
+                val ctx = getApplication<Application>()
+                ReticulumService.stop(ctx)
+
+                // ReticulumService.onDestroy nulls out the static instance
+                // pointer. Poll until that happens (or we hit a 5s safety
+                // ceiling) so the next start() doesn't race a half-torn-down
+                // service. 5s mirrors the StoreLifecycle drain budget inside
+                // rns-android, which is what dominates teardown time.
+                val deadline = System.currentTimeMillis() + 5_000
+                while (System.currentTimeMillis() < deadline &&
+                    ReticulumService.getInstance() != null
+                ) {
+                    delay(100)
+                }
+                // Extra grace for socket cleanup so the next probe sees
+                // either the new host bound or nothing bound — never a
+                // half-closed socket from a previous attempt.
+                delay(300)
+
+                _connectedToSharedInstance.value = false
+                _reticulumStarted.value = false
+                bringUpReticulum()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Reticulum", e)
+                Log.e(TAG, "Failed to restart Reticulum", e)
+            }
+        }
+    }
+
+    /**
+     * Periodic watchdog that compares actual shared-instance topology
+     * (is a TCP server bound to 127.0.0.1:37428 right now?) to our
+     * current attached state, and triggers a [restartReticulum] cycle
+     * whenever they disagree. This is what lets the user start, stop,
+     * or swap shared-instance host apps after Eridanus is already
+     * running without having to relaunch Eridanus.
+     *
+     * Cases it handles:
+     *
+     *   - Eridanus started before the host app: probe goes from
+     *     false→true as soon as the user launches Sideband / Caelum
+     *     / Reticulum-android, watchdog re-runs the attach probe.
+     *   - Host app gets killed: probe goes true→false, watchdog
+     *     drops us cleanly back to standalone so the rns-core flag
+     *     reflects reality instead of staying stuck at "connected."
+     *   - User swaps hosts (Sideband off → Caelum on, same port):
+     *     probe oscillates false→true, watchdog re-attaches to
+     *     whoever is bound now.
+     *
+     * 10s cadence is light enough to not matter for battery (one
+     * loopback TCP connect every 10s) and tight enough that switching
+     * hosts feels responsive without the user having to tap retry.
+     */
+    private fun startSharedInstanceWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                try {
+                    val probe = Reticulum.isSharedInstanceRunning(
+                        ReticulumConfig.DEFAULT.sharedInstancePort
+                    )
+                    val attached = _connectedToSharedInstance.value
+
+                    if (probe != attached) {
+                        Log.i(
+                            TAG,
+                            "Watchdog: shared-instance topology changed " +
+                                "(probe=$probe, attached=$attached) — restarting Reticulum",
+                        )
+                        restartReticulum()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Watchdog probe failed: ${e.message}")
+                }
             }
         }
     }
@@ -281,29 +417,24 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * User-driven retry from the "No shared instance — tap to retry"
+     * banner. Delegates to [restartReticulum], which is what the
+     * background watchdog also uses, so the two paths share a single
+     * serialized teardown+bring-up cycle.
+     *
+     * The previous implementation only called
+     * `ReticulumService.reconnectInterfaces()` which kicks the
+     * onReconnectRequested callback on already-registered interfaces.
+     * If Eridanus started before any shared-instance host existed, no
+     * LocalClientInterface was ever created and there was nothing to
+     * reconnect — the retry would log `connected=false` forever even
+     * after the user started Sideband. The full teardown+restart here
+     * is what actually re-runs rns-android's auto-attach probe.
+     */
     fun retrySharedInstance() {
         viewModelScope.launch(Dispatchers.IO) {
-            // rns-android's ReticulumService picks the shared-instance role
-            // (client-of-existing vs server) at startup based on whether a
-            // listener is already bound on the configured port. To "retry"
-            // we ask it to re-probe by reconnecting its interfaces; if a
-            // shared instance has since appeared on the port (e.g. rnsd
-            // came up after the app started, or adb reverse was set up
-            // late) the rebuilt LocalClientInterface will attach this time.
-            val service = ReticulumService.getInstance()
-            if (service == null) {
-                Log.w(TAG, "Retry shared instance: service not yet running")
-                _connectedToSharedInstance.value = false
-                return@launch
-            }
-            service.reconnectInterfaces()
-            kotlinx.coroutines.delay(500)
-            val connected = service.getReticulum()?.connectToSharedInstance == true
-            _connectedToSharedInstance.value = connected
-            if (connected) {
-                registerAnnounceHandler()
-            }
-            Log.i(TAG, "Retry shared instance: connected=$connected")
+            restartReticulum()
         }
     }
 
