@@ -37,3 +37,9 @@ Eridanus is a [constellation](https://en.wikipedia.org/wiki/Eridanus_(constellat
 
 > No man ever steps in the same river twice, for it's not the same river and he's not the same man.
 > -_Heraclitus_
+
+## License
+
+Eridanus's own source code is licensed under the [Mozilla Public License 2.0](LICENSE).
+
+Eridanus ships in two build flavors that bundle different Reticulum implementations under different downstream terms — the kotlin flavor bundles MPL-2.0 [reticulum-kt](https://github.com/torlando-tech/reticulum-kt); the python flavor bundles the upstream Python Reticulum under the Reticulum License, which adds field-of-use restrictions. See [NOTICE](NOTICE) for the full breakdown before redistributing a build.

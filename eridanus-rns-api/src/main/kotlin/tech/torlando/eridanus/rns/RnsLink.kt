@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.rns
 
 enum class RnsResourceStrategy { ACCEPT_NONE, ACCEPT_APP, ACCEPT_ALL }

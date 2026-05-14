@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.ui.components
 
 import androidx.compose.animation.AnimatedVisibility

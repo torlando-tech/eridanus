@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.rrc
 
 import tech.torlando.eridanus.rrc.RrcConstants.K_BODY

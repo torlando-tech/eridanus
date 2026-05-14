@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 # event_bridge.py
 #
 # Tiny shim between Reticulum's python callback contracts and Kotlin

@@ -1,0 +1,54 @@
+Eridanus — Bundled Component Notices
+====================================
+
+Eridanus's own source code is licensed under the Mozilla Public License
+2.0. See LICENSE.
+
+Eridanus ships in two build flavors (the `rnsImpl` Gradle product-flavor
+dimension). Each APK bundles a different Reticulum implementation, and
+the two carry different downstream terms — read this before
+redistributing a build.
+
+
+Kotlin flavor  —  eridanus-kotlin-*.apk
+---------------------------------------
+
+Bundles reticulum-kt (https://github.com/torlando-tech/reticulum-kt),
+licensed under the Mozilla Public License 2.0 — the same license as
+Eridanus's own code. No additional restrictions; the APK as a whole is
+distributable under MPL-2.0 terms.
+
+
+Python flavor  —  eridanus-python-*.apk
+---------------------------------------
+
+Bundles the upstream reference implementation of Reticulum (the Python
+RNS), vendored as a git submodule at eridanus-rns-backend-py/Reticulum/.
+It is licensed under the **Reticulum License** — see that directory's
+LICENSE file for the authoritative text. The Reticulum License is an
+MIT-derived permissive license with two additional field-of-use
+restrictions:
+
+  - The software shall not be used in any kind of system which includes
+    among its functions the ability to purposefully do harm to human
+    beings.
+
+  - The software shall not be used, directly or indirectly, in the
+    creation of an artificial intelligence, machine learning or language
+    model training dataset.
+
+MPL-2.0 governs only Eridanus's own files and places no restriction on
+the remainder of a Larger Work (MPL-2.0 §3.3), so the two licenses
+combine cleanly. However, the field-of-use restrictions above apply to
+the Reticulum-licensed portion of the python-flavor APK and ride along
+with any redistribution of that APK.
+
+The python flavor also bundles:
+
+  - Chaquopy (https://github.com/chaquo/chaquopy) — MIT License — the
+    Python runtime/build system that embeds CPython into the APK.
+  - CPython and the Python standard library — Python Software
+    Foundation License.
+
+Both are standard permissive licenses and impose no field-of-use
+restrictions.
