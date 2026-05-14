@@ -62,9 +62,47 @@ jobs:
         run: |
           # assembleRelease fans out to assembleKotlinRelease +
           # assemblePythonRelease via the rnsImpl flavor dimension. Both
-          # are signed with the same keystore.
+          # inherit the `release` build type's signing config, so both are
+          # signed with the same keystore — provided the KEYSTORE_* secrets
+          # above are present. The next step hard-verifies that.
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
           echo "Both flavor release APKs built successfully"
+
+      - name: Verify both flavor APKs are signed
+        # Hard gate: a tagged release must never publish an unsigned APK.
+        # If a KEYSTORE_* secret is missing or unreadable the gradle build
+        # still succeeds — it just produces *-unsigned.apk — so without
+        # this check release.yml would happily rename and publish them.
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          echo "Using $APKSIGNER"
+          FAIL=0
+          for flavor in kotlin python; do
+            APK=$(find "app/build/outputs/apk/$flavor/release" -name "*.apk" | head -1)
+            if [ -z "$APK" ]; then
+              echo "::error::No $flavor-flavor release APK found"
+              FAIL=1
+              continue
+            fi
+            case "$APK" in
+              *-unsigned.apk)
+                echo "::error::$flavor APK is unsigned ($APK) — release signing secrets not applied"
+                FAIL=1
+                continue
+                ;;
+            esac
+            if "$APKSIGNER" verify --verbose "$APK"; then
+              echo "OK: $flavor APK signature verified ($APK)"
+            else
+              echo "::error::$flavor APK failed signature verification ($APK)"
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ] || exit 1
 
       - name: Verify critical classes survive R8 (kotlin flavor)
         # verify_r8_keeps.py's keep-list is reticulum-kt / BouncyCastle /
