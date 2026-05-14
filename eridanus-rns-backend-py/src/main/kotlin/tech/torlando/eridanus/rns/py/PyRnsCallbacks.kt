@@ -4,32 +4,41 @@ package tech.torlando.eridanus.rns.py
 
 import com.chaquo.python.PyObject
 
-// Functional interfaces — passed across the kotlin↔python seam via
-// event_bridge.py. Each Python wrapper in event_bridge invokes `call(...)`
-// on the Kotlin instance, so chaquopy's java-callable-as-python bridge
-// converts kotlin lambdas to python callables of the precise shape
-// Reticulum expects.
+// Bridge callbacks passed across the kotlin↔python seam via event_bridge.py.
+// Each Python wrapper in event_bridge invokes `call(...)` on the Kotlin
+// instance through chaquopy's reflective method dispatch.
 //
-// Defining these as `fun interface` keeps the Kotlin call sites SAM-friendly
-// and gives chaquopy a Java functional interface (`@FunctionalInterface`
-// under the hood) to introspect.
+// These are deliberately concrete classes, NOT `fun interface`s. A SAM-
+// converted lambda (`PyAnnounceCallback { ... }`) compiles to an R8-
+// *synthesized* class ($$ExternalSyntheticLambda); R8's name-pattern keep
+// rules (`-keep class ...rns.py.** { *; }`) only pin real program classes,
+// not R8's own synthetics — so R8 renames the synthetic and the synthetic's
+// `call`, and python's `kt_cb.call(...)` then fails with
+//   AttributeError: '<minified>' object has no attribute 'call'
+// on every received announce / link / packet / resource callback (debug
+// builds aren't minified, which masks it). A concrete class is a real
+// program class the keep rule actually pins. The single function-type
+// constructor param keeps the trailing-lambda ergonomics at call sites.
 
-fun interface PyAnnounceCallback {
-    fun call(destHash: ByteArray, announcedIdentity: PyObject?, appData: ByteArray?): Boolean
+class PyAnnounceCallback(
+    private val fn: (destHash: ByteArray, announcedIdentity: PyObject?, appData: ByteArray?) -> Boolean,
+) {
+    fun call(destHash: ByteArray, announcedIdentity: PyObject?, appData: ByteArray?): Boolean =
+        fn(destHash, announcedIdentity, appData)
 }
 
-fun interface PyPacketCallback {
-    fun call(data: ByteArray)
+class PyPacketCallback(private val fn: (data: ByteArray) -> Unit) {
+    fun call(data: ByteArray) = fn(data)
 }
 
-fun interface PyLinkCallback {
-    fun call(link: PyObject)
+class PyLinkCallback(private val fn: (link: PyObject) -> Unit) {
+    fun call(link: PyObject) = fn(link)
 }
 
-fun interface PyResourceCallback {
-    fun call(advertisement: PyObject): Boolean
+class PyResourceCallback(private val fn: (advertisement: PyObject) -> Boolean) {
+    fun call(advertisement: PyObject): Boolean = fn(advertisement)
 }
 
-fun interface PyResourceConcludedCallback {
-    fun call(resource: PyObject)
+class PyResourceConcludedCallback(private val fn: (resource: PyObject) -> Unit) {
+    fun call(resource: PyObject) = fn(resource)
 }
