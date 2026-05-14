@@ -10,6 +10,11 @@ android {
     defaultConfig {
         minSdk = 26
 
+        // event_bridge.py reflectively calls into this module's Kotlin
+        // classes (chaquopy PyObject.call). These keep rules must reach
+        // the consuming :app python flavor's R8 run — see consumer-rules.pro.
+        consumerProguardFiles("consumer-rules.pro")
+
         // Chaquopy ships a Python interpreter as a native library per ABI.
         // Python 3.12+ is 64-bit only — restrict to arm64-v8a (real devices)
         // + x86_64 (emulators). The :app python flavor inherits this via
