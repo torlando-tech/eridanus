@@ -55,6 +55,18 @@ class PyReticulumService : Service() {
         }
 
     private fun bootInWorkerThread() {
+        if (reticulum != null) {
+            // Already booted. onStartCommand fires again on every
+            // foreground — a recreated EridanusViewModel calls
+            // backend.start() from its init — and on START_STICKY
+            // re-delivery. Re-running reticulum_start would
+            // reticulum_reset_class_state() + RNS.Reticulum() the *live*
+            // instance: tearing down and rebuilding it, dropping the
+            // shared-instance attachment and every registered announce
+            // handler. Make re-invocation a no-op.
+            Log.d(TAG, "bootInWorkerThread: Reticulum already running — skipping re-init")
+            return
+        }
         if (startInProgress) return
         startInProgress = true
         worker.execute {

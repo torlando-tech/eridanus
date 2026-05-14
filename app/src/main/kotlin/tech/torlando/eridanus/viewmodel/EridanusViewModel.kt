@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import tech.torlando.eridanus.EridanusApp
 import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import tech.torlando.eridanus.rns.RnsAnnounceHandlerRegistration
 import tech.torlando.eridanus.rns.RnsBackend
 import tech.torlando.eridanus.rns.RnsBackendConfig
 import tech.torlando.eridanus.rns.RnsIdentity
@@ -221,6 +222,14 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private val restartMutex = Mutex()
     private var watchdogJob: Job? = null
 
+    // This ViewModel's announce-handler registration with the backend.
+    // [registerAnnounceHandler] deregisters the previous one before
+    // registering a new one, and [onCleared] deregisters on teardown —
+    // without that, every restartBackend() cycle and every ViewModel
+    // recreation would leave a stale handler in RNS's handler list,
+    // pinning a leaked ViewModel.
+    private var announceHandlerRegistration: RnsAnnounceHandlerRegistration? = null
+
     init {
         initReticulum()
         observeNotificationStatus()
@@ -247,16 +256,45 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
      */
     private suspend fun bringUpReticulum() {
         try {
-            // Bring up Reticulum via the chosen backend (see :eridanus-rns-api
-            // and the per-flavor source-set wiring in EridanusApp). The kotlin
-            // flavor delegates to rns-android's foreground service, which
-            // wires Room-backed IdentityStore / PathStore / AnnounceStore so
-            // known destinations / ratchets / announce-cache stay in SQLite
-            // instead of /.reticulum/* on root fs (which the old direct
-            // Reticulum.start() path silently fell back to on Android because
-            // `user.home` is empty). The python flavor does the equivalent
-            // via upstream python Reticulum running as a shared-instance
-            // client through chaquopy.
+            if (backend.isRunning) {
+                // The backend's foreground service + RNS instance are
+                // already up — this is a ViewModel recreation (Android
+                // destroyed and recreated the Activity while the app was
+                // backgrounded), NOT a cold start. Calling backend.start()
+                // again would re-fire the foreground service's
+                // onStartCommand and, on the python flavor, re-initialize
+                // the live RNS instance — dropping the shared-instance
+                // attachment and churning announce handlers on every
+                // foreground. Instead just resync UI state from the
+                // still-running backend and re-register this ViewModel's
+                // announce handler. No backend.start(), no 2s cold-start
+                // delay (so the "Starting Reticulum" flash goes away).
+                loadIdentitiesIfNeeded()
+                _reticulumStarted.value = true
+                val connected = backend.connectedToSharedInstance
+                _connectedToSharedInstance.value = connected
+                if (connected) {
+                    _wasConnectedToSharedInstance.value = false
+                    registerAnnounceHandler()
+                }
+                Log.i(
+                    TAG,
+                    "Reticulum already running (backend=${backend.identifier}, " +
+                        "shared instance: $connected) — resynced without restart"
+                )
+                return
+            }
+
+            // Cold start. Bring up Reticulum via the chosen backend (see
+            // :eridanus-rns-api and the per-flavor source-set wiring in
+            // EridanusApp). The kotlin flavor delegates to rns-android's
+            // foreground service, which wires Room-backed IdentityStore /
+            // PathStore / AnnounceStore so known destinations / ratchets /
+            // announce-cache stay in SQLite instead of /.reticulum/* on root
+            // fs (which the old direct Reticulum.start() path silently fell
+            // back to on Android because `user.home` is empty). The python
+            // flavor does the equivalent via upstream python Reticulum
+            // running as a shared-instance client through chaquopy.
             //
             // shareInstance = false: Eridanus is a chat client with no UI for
             // configuring Reticulum interfaces. If we became the
@@ -278,18 +316,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             // window.
             delay(2000)
 
-            // Identities are persistent across restarts; only generate on
-            // first ever start. Subsequent restartBackend() cycles reuse
-            // the same identities so the peer-identity surface a hub sees
-            // doesn't churn whenever the user toggles a host app.
-            if (hubIdentity == null) {
-                hubIdentity = identityStore.loadHubIdentity()
-                    ?: backend.identities.create().also { identityStore.saveHubIdentity(it) }
-            }
-            if (clientIdentity == null) {
-                clientIdentity = identityStore.loadClientIdentity()
-                    ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
-            }
+            loadIdentitiesIfNeeded()
 
             _reticulumStarted.value = backend.isRunning
             val connected = backend.connectedToSharedInstance
@@ -305,6 +332,24 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start Reticulum", e)
+        }
+    }
+
+    /**
+     * Identities are persistent across restarts; only generate on the
+     * first ever start. Subsequent restartBackend() cycles and ViewModel
+     * recreations reuse the same identities so the peer-identity surface a
+     * hub sees doesn't churn whenever the user backgrounds the app or
+     * toggles a shared-instance host.
+     */
+    private fun loadIdentitiesIfNeeded() {
+        if (hubIdentity == null) {
+            hubIdentity = identityStore.loadHubIdentity()
+                ?: backend.identities.create().also { identityStore.saveHubIdentity(it) }
+        }
+        if (clientIdentity == null) {
+            clientIdentity = identityStore.loadClientIdentity()
+                ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
         }
     }
 
@@ -455,12 +500,20 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
 
     private fun registerAnnounceHandler() {
+        // Drop the previous registration first. This is called on every
+        // bringUpReticulum() (cold start + ViewModel-recreation resync) and
+        // every restartBackend() cycle — without deregistering, each call
+        // appends another handler to RNS's announce_handlers list, and each
+        // stale handler captures `this` and keeps firing redundant
+        // hubDao upserts.
+        announceHandlerRegistration?.deregister()
+        announceHandlerRegistration = null
         try {
             val handler = RnsAnnounceHandler { destHash, _, appData ->
                 handleHubAnnounce(destHash, appData)
                 true
             }
-            backend.transport.registerAnnounceHandler(handler)
+            announceHandlerRegistration = backend.transport.registerAnnounceHandler(handler)
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)
@@ -1116,7 +1169,17 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         super.onCleared()
-        // Don't disconnect/stop here — the foreground service keeps the process alive.
-        // If the service is not running (user manually disconnected), these are already null.
+        // Deregister our announce handler — it captures `this`, and the
+        // backend's RNS instance outlives the ViewModel (foreground
+        // service keeps it up). Without this, a ViewModel destroyed on
+        // Activity teardown stays pinned in RNS's handler list.
+        // watchdogJob and clientEventJob don't need explicit cancellation
+        // — they're launched in viewModelScope, which is cancelled
+        // automatically after onCleared().
+        announceHandlerRegistration?.deregister()
+        announceHandlerRegistration = null
+        // Don't disconnect/stop the backend here — the foreground service
+        // keeps the RNS instance alive across ViewModel recreation, and
+        // the next ViewModel's bringUpReticulum() resyncs to it.
     }
 }

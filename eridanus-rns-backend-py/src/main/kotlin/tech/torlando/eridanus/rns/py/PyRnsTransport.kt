@@ -5,6 +5,7 @@ package tech.torlando.eridanus.rns.py
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import tech.torlando.eridanus.rns.RnsAnnounceHandlerRegistration
 import tech.torlando.eridanus.rns.RnsDestination
 import tech.torlando.eridanus.rns.RnsTransport
 
@@ -34,7 +35,9 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
         rns.get("Transport")!!.callAttr("deregister_destination", destination.asPy())
     }
 
-    override fun registerAnnounceHandler(handler: RnsAnnounceHandler) {
+    override fun registerAnnounceHandler(
+        handler: RnsAnnounceHandler,
+    ): RnsAnnounceHandlerRegistration {
         val ktCb = PyAnnounceCallback { destHash, announcedIdentity, appData ->
             // The PyObject for the announced identity might be useful to
             // app-side handlers; eridanus' announce path ignores it but
@@ -42,8 +45,15 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
             val identityWrap = announcedIdentity?.let(::PyRnsIdentity)
             handler.onAnnounce(destHash, identityWrap, appData)
         }
+        // event_bridge.announce_handler wraps the kotlin callback in a python
+        // object with the aspect_filter / received_announce shape RNS wants.
+        // RNS.Transport.deregister_announce_handler keys on that exact object,
+        // so the returned token closes over `pyHandler`.
         val pyHandler = bridge.callAttr("announce_handler", ktCb)
         rns.get("Transport")!!.callAttr("register_announce_handler", pyHandler)
+        return RnsAnnounceHandlerRegistration {
+            rns.get("Transport")!!.callAttr("deregister_announce_handler", pyHandler)
+        }
     }
 
     private val bridge: PyObject

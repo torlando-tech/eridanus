@@ -5,6 +5,7 @@ package tech.torlando.eridanus.rns.kt
 import network.reticulum.transport.AnnounceHandler
 import network.reticulum.transport.Transport
 import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import tech.torlando.eridanus.rns.RnsAnnounceHandlerRegistration
 import tech.torlando.eridanus.rns.RnsDestination
 import tech.torlando.eridanus.rns.RnsTransport
 
@@ -26,11 +27,18 @@ object KtRnsTransport : RnsTransport {
         Transport.deregisterDestination(destination.asKt())
     }
 
-    override fun registerAnnounceHandler(handler: RnsAnnounceHandler) {
-        Transport.registerAnnounceHandler(
-            AnnounceHandler { destinationHash, announcedIdentity, appData ->
-                handler.onAnnounce(destinationHash, KtRnsIdentity(announcedIdentity), appData)
-            }
-        )
+    override fun registerAnnounceHandler(
+        handler: RnsAnnounceHandler,
+    ): RnsAnnounceHandlerRegistration {
+        // Hold a reference to the exact reticulum-kt AnnounceHandler we
+        // register — Transport.deregisterAnnounceHandler keys on object
+        // identity, so the returned token closes over `ktHandler`.
+        val ktHandler = AnnounceHandler { destinationHash, announcedIdentity, appData ->
+            handler.onAnnounce(destinationHash, KtRnsIdentity(announcedIdentity), appData)
+        }
+        Transport.registerAnnounceHandler(ktHandler)
+        return RnsAnnounceHandlerRegistration {
+            Transport.deregisterAnnounceHandler(ktHandler)
+        }
     }
 }
