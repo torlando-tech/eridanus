@@ -21,13 +21,18 @@ jobs:
           submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        # Pinned to v5, not v6: gradle/actions@v6 extracts caching into a
+        # separate proprietary `gradle-actions-caching` component governed
+        # by Gradle's commercial Terms of Use (loaded whenever caching is
+        # enabled, which it is here). v5 stays fully MIT and already runs
+        # on Node 24, which is all we need for the deprecation.
+        uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: false
 
@@ -178,7 +183,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload APKs as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eridanus-${{ steps.version.outputs.version }}-apks
           path: eridanus-*.apk
