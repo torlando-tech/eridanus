@@ -115,7 +115,8 @@ android {
                 }
             }
         } else {
-            println("Release signing not configured (missing environment variables)")
+            println("Release keystore env vars not set — release builds will " +
+                "fall back to debug signing (installable, but NOT a real release)")
         }
     }
 
@@ -126,8 +127,18 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (releaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
+            // When the real keystore is configured (tagged releases via
+            // release.yml), sign with it. Otherwise fall back to the debug
+            // keystore rather than producing an *unsigned* APK — an unsigned
+            // release APK can't be installed on any device, which makes the
+            // PR-CI `release-apks` artifact useless for testing. Debug-signed
+            // release APKs are still R8-minified, just not distributable.
+            // release.yml's apksigner gate rejects debug-signed APKs, so a
+            // missing-secret situation can never ship a real release.
+            signingConfig = if (releaseSigningConfigured) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
         }
     }

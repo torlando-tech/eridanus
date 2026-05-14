@@ -68,11 +68,16 @@ jobs:
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
           echo "Both flavor release APKs built successfully"
 
-      - name: Verify both flavor APKs are signed
-        # Hard gate: a tagged release must never publish an unsigned APK.
-        # If a KEYSTORE_* secret is missing or unreadable the gradle build
-        # still succeeds — it just produces *-unsigned.apk — so without
-        # this check release.yml would happily rename and publish them.
+      - name: Verify both flavor APKs are release-signed
+        # Hard gate: a tagged release must be signed with the real release
+        # keystore — never unsigned, never debug-signed. The release build
+        # type falls back to debug signing when the KEYSTORE_* secrets are
+        # absent (so PR-CI artifacts stay installable), which means a
+        # missing/unreadable secret here would silently produce a
+        # *debug-signed* "release" that still passes `apksigner verify`.
+        # So this gate checks the signer certificate, not just signature
+        # validity: the Android debug cert's well-known DN
+        # (CN=Android Debug, O=Android, C=US) is rejected outright.
         run: |
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
           if [ -z "$APKSIGNER" ]; then
@@ -95,12 +100,18 @@ jobs:
                 continue
                 ;;
             esac
-            if "$APKSIGNER" verify --verbose "$APK"; then
-              echo "OK: $flavor APK signature verified ($APK)"
-            else
+            CERTS=$("$APKSIGNER" verify --print-certs --verbose "$APK" 2>&1) || {
               echo "::error::$flavor APK failed signature verification ($APK)"
+              echo "$CERTS"
               FAIL=1
+              continue
+            }
+            if echo "$CERTS" | grep -q "CN=Android Debug"; then
+              echo "::error::$flavor APK is DEBUG-signed ($APK) — release keystore secrets not applied"
+              FAIL=1
+              continue
             fi
+            echo "OK: $flavor APK is release-signed ($APK)"
           done
           [ "$FAIL" -eq 0 ] || exit 1
 
