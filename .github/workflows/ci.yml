@@ -8,15 +8,18 @@ on:
 
 jobs:
   r8-verification:
-    name: Verify R8 Keep Rules
+    name: Build both flavors + verify R8 keeps
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Reticulum is vendored as a submodule under
+          # eridanus-rns-backend-py/Reticulum — chaquopy needs it on the
+          # python path for the python flavor build.
           submodules: recursive
 
       - name: Set up JDK 17
@@ -31,26 +34,57 @@ jobs:
           cache-read-only: true
 
       - name: Set up Python
+        # Build-machine python for chaquopy's gradle tasks (NOT the python
+        # bundled into the APK — chaquopy downloads its own 3.12 runtime
+        # for that). Any chaquopy-supported version works on the host.
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Build Release APK
+      - name: Build both flavor release APKs
+        # assembleRelease fans out to assembleKotlinRelease +
+        # assemblePythonRelease via the rnsImpl flavor dimension.
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace --max-workers=2
 
-      - name: Verify critical classes survive R8 minification
+      - name: Verify critical classes survive R8 (kotlin flavor)
+        # verify_r8_keeps.py's class list is reticulum-kt / BouncyCastle /
+        # msgpack specific — those only exist in the kotlin flavor. The
+        # python flavor's minification surface is entirely different
+        # (chaquopy runtime + PyRns* wrappers, no reticulum-kt) and needs
+        # its own keep-list; tracked as a follow-up.
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No release APK found!"
+            echo "ERROR: No kotlin-flavor release APK found!"
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
 
-      - name: Upload R8 mapping file
+      - name: Confirm python flavor APK was produced
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/python/release -name "*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No python-flavor release APK found!"
+            exit 1
+          fi
+          echo "python flavor APK: $APK_PATH ($(du -h "$APK_PATH" | cut -f1))"
+
+      - name: Upload flavor APKs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r8-mapping
-          path: app/build/outputs/mapping/release/mapping.txt
+          name: release-apks
+          path: |
+            app/build/outputs/apk/kotlin/release/*.apk
+            app/build/outputs/apk/python/release/*.apk
+          retention-days: 14
+
+      - name: Upload R8 mapping files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-mappings
+          path: |
+            app/build/outputs/mapping/kotlinRelease/mapping.txt
+            app/build/outputs/mapping/pythonRelease/mapping.txt
           retention-days: 30

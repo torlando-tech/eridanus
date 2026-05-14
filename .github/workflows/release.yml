@@ -16,6 +16,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Reticulum submodule (eridanus-rns-backend-py/Reticulum) — needed
+          # for the python flavor's chaquopy build.
           submodules: recursive
 
       - name: Set up JDK 17
@@ -39,25 +41,35 @@ jobs:
           echo "Building version: $VERSION from tag: $TAG_NAME"
 
       - name: Set up Python
+        # Build-machine python for chaquopy's gradle tasks. The python
+        # bundled into the python-flavor APK is downloaded separately by
+        # chaquopy (3.12) and is independent of this.
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Build Release APK
+      - name: Build both flavor release APKs
         env:
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          # assembleRelease fans out to assembleKotlinRelease +
+          # assemblePythonRelease via the rnsImpl flavor dimension. Both
+          # are signed with the same keystore.
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
-          echo "Release APK built successfully"
+          echo "Both flavor release APKs built successfully"
 
-      - name: Verify critical classes survive R8 minification
+      - name: Verify critical classes survive R8 (kotlin flavor)
+        # verify_r8_keeps.py's keep-list is reticulum-kt / BouncyCastle /
+        # msgpack specific — kotlin flavor only. The python flavor's
+        # minification surface is different (chaquopy runtime + PyRns*
+        # wrappers, no reticulum-kt) and needs its own keep-list; follow-up.
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No release APK found!"
+            echo "ERROR: No kotlin-flavor release APK found!"
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
@@ -68,6 +80,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
+          # Both flavors are signed with the same keystore, so one
+          # fingerprint extraction covers both APKs.
           CERT_INFO=$(keytool -list -v -keystore app/build/keystore/release.keystore \
             -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD")
           SHA256=$(echo "$CERT_INFO" | grep "SHA256:" | awk '{print $2}')
@@ -80,14 +94,21 @@ jobs:
           echo "sha1=$SHA1" >> $GITHUB_OUTPUT
           echo "Extracted certificate fingerprints"
 
-      - name: Rename APK with version
+      - name: Collect + rename flavor APKs
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          APK_DIR="app/build/outputs/apk/release"
-          cp "$APK_DIR/"*.apk "eridanus-${VERSION}.apk"
+          # Two equal-billing release artifacts, one per rnsImpl flavor.
+          KOTLIN_APK=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
+          PYTHON_APK=$(find app/build/outputs/apk/python/release -name "*.apk" | head -1)
+          if [ -z "$KOTLIN_APK" ] || [ -z "$PYTHON_APK" ]; then
+            echo "::error::Missing a flavor APK (kotlin='$KOTLIN_APK' python='$PYTHON_APK')"
+            exit 1
+          fi
+          cp "$KOTLIN_APK" "eridanus-kotlin-${VERSION}.apk"
+          cp "$PYTHON_APK" "eridanus-python-${VERSION}.apk"
           ls -la eridanus-*.apk
-          echo "Renamed APK"
+          echo "Renamed both flavor APKs"
 
       - name: Generate SHA256 checksums
         run: |
@@ -119,20 +140,34 @@ jobs:
           body: |
             ## Eridanus ${{ steps.version.outputs.version }}
 
-            ### Installation
-            Download the APK and install on your Android device (Android 8.0+).
+            ### Which APK?
 
-            > **eridanus-${{ steps.version.outputs.version }}.apk** — single universal APK, works on all devices.
+            Eridanus ships two flavors. Both behave identically and both
+            attach to a shared Reticulum instance on your device (Sideband,
+            rnsd in Termux, Reticulum-for-Android, Carina, …). The only
+            difference is *which Reticulum implementation runs in-process*:
+
+            | APK | Reticulum implementation | Size |
+            |-----|--------------------------|------|
+            | **eridanus-kotlin-${{ steps.version.outputs.version }}.apk** | reticulum-kt (kotlin port) | smaller |
+            | **eridanus-python-${{ steps.version.outputs.version }}.apk** | upstream python Reticulum, embedded via chaquopy — the reference implementation | larger (bundles a Python runtime) |
+
+            If you're unsure, the kotlin APK is the smaller download. If you
+            specifically want the reference Reticulum implementation running
+            in-process, choose the python APK.
+
+            ### Installation
+            Download one APK and install on your Android device (Android 8.0+).
 
             ### Verification
 
-            **Signing Certificate Fingerprints:**
+            **Signing Certificate Fingerprints** (both APKs, same keystore):
             ```
             SHA-256: ${{ steps.cert.outputs.sha256 }}
             SHA-1:   ${{ steps.cert.outputs.sha1 }}
             ```
 
-            **SHA256 Checksum:**
+            **SHA256 Checksums:**
             ```
             ${{ steps.sha256.outputs.checksums }}
             ```
@@ -142,9 +177,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload APK as workflow artifact
+      - name: Upload APKs as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: eridanus-${{ steps.version.outputs.version }}-apk
+          name: eridanus-${{ steps.version.outputs.version }}-apks
           path: eridanus-*.apk
           retention-days: 30
