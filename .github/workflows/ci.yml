@@ -54,9 +54,7 @@ jobs:
       - name: Verify critical classes survive R8 (kotlin flavor)
         # verify_r8_keeps.py's class list is reticulum-kt / BouncyCastle /
         # msgpack specific — those only exist in the kotlin flavor. The
-        # python flavor's minification surface is entirely different
-        # (chaquopy runtime + PyRns* wrappers, no reticulum-kt) and needs
-        # its own keep-list; tracked as a follow-up.
+        # python flavor has its own bridge check below.
         run: |
           APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
@@ -64,6 +62,20 @@ jobs:
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
+
+      - name: Verify python-kotlin bridge survives R8 (python flavor)
+        # event_bridge.py calls back into the Py*Callback classes by
+        # reflective name (chaquopy `kt_cb.call(...)`). If R8 renames a
+        # callback class or its `call` method, every announce / link /
+        # packet / resource callback throws AttributeError at runtime —
+        # and only on minified (release) builds, so it ships unnoticed.
+        run: |
+          MAPPING=app/build/outputs/mapping/pythonRelease/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "ERROR: python-flavor R8 mapping not found at $MAPPING!"
+            exit 1
+          fi
+          python scripts/verify_python_bridge.py "$MAPPING"
 
       - name: Confirm python flavor APK was produced
         run: |
