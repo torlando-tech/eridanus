@@ -133,20 +133,27 @@ android {
     }
 
     // rnsImpl flavor dimension — see Memory/eridanus/rns-backend-dual-build.md.
-    // `kotlin` ships reticulum-kt embedded; `python` will (after chaquopy
-    // wiring lands) embed chaquopy + upstream RNS. Both attach to a shared
-    // instance the same way at runtime; the difference is which code runs
-    // the crypto / link state machine / packet framing in-process.
+    // `kotlin` ships reticulum-kt embedded; `python` embeds chaquopy +
+    // upstream RNS. Both attach to a shared instance the same way at
+    // runtime; the difference is which code runs the crypto / link state
+    // machine / packet framing in-process.
+    //
+    // Each flavor gets a distinct applicationId (via applicationIdSuffix)
+    // so the two can be installed side by side — useful for direct
+    // comparison and for two-device parity testing on a single phone.
+    // `namespace` stays "tech.torlando.eridanus" (the code package is
+    // shared); only the installed app id diverges. Per-flavor app_name
+    // strings (app/src/<flavor>/res/values/strings.xml) keep them
+    // distinguishable in the launcher.
     flavorDimensions += "rnsImpl"
     productFlavors {
         create("kotlin") {
             dimension = "rnsImpl"
-            // Default APK filename pattern: eridanus-kotlin-...
+            applicationIdSuffix = ".kotlin"
         }
         create("python") {
             dimension = "rnsImpl"
-            // python flavor scaffolding only — runtime calls into PyRnsBackend
-            // throw NotImplementedError until chaquopy wires through.
+            applicationIdSuffix = ".python"
         }
     }
 
