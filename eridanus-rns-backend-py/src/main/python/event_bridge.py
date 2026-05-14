@@ -63,45 +63,187 @@ def resource_concluded_callback(kt_cb):
     return lambda resource: kt_cb.call(resource)
 
 
-def reticulum_config_dir(app_files_dir):
-    """Writes a minimal Reticulum config that wires a LocalClientInterface
-    pointing at 127.0.0.1:37428. Eridanus is a shared-instance client only
-    — no transport routing, no hosted interfaces. Returns the configdir
-    path for `RNS.Reticulum(configdir=...)`.
+def reticulum_config_dir(app_files_dir, attach_to_shared_instance):
+    """Writes a minimal Reticulum config and returns the configdir path for
+    `RNS.Reticulum(configdir=...)`.
 
-    Idempotent: if the config file already exists we leave it alone, so
-    user-edits (unlikely for eridanus today but reserved for future) aren't
-    clobbered."""
+    Eridanus's python flavor is a shared-instance-CLIENT-only app, but
+    upstream RNS has no explicit "client only" mode like reticulum-kt does
+    — it only attaches as a client *as a fallback* when `share_instance =
+    yes` is set and the LocalServerInterface bind fails because something
+    else (Sideband, rnsd, etc.) has 37428 first. So the natural pattern
+    for attaching to an existing host is paradoxically to set
+    `share_instance = yes` — RNS tries to bind, the bind fails, RNS falls
+    through to LocalClientInterface.
+
+    That's only safe when we already know a host is present. If we set
+    `share_instance = yes` and *nothing* is on 37428, the bind succeeds
+    and we silently become the shared-instance server ourselves —
+    exactly the "role inversion" eridanus deliberately wants to avoid (see
+    EridanusViewModel.bringUpReticulum). So the caller (PyRnsBackend via
+    the EridanusViewModel watchdog) is expected to TCP-probe 37428 first
+    and pass the result here.
+
+    The file is rewritten on every call so config improvements (e.g.
+    shared_instance_type = tcp, added 2026-05-13) propagate to installs
+    with an older config on disk, and so that the share_instance bit
+    can flip as the topology changes. Eridanus has no user-editable
+    Reticulum config surface today.
+
+    rpc_key: not currently written. columba v0.10.x required a user-
+    supplied RPC key from Sideband for full inter-app shared-instance
+    functionality. Eridanus's basic RRC (announce + link) traffic may
+    work without it; full feature parity probably needs an rpc_key
+    field on the settings card. Tracked in
+    Memory/eridanus/rns-backend-dual-build.md.
+    """
     import os
     configdir = os.path.join(app_files_dir, "reticulum")
     os.makedirs(configdir, exist_ok=True)
     config_path = os.path.join(configdir, "config")
-    if not os.path.exists(config_path):
-        with open(config_path, "w") as f:
-            f.write(
-                "[reticulum]\n"
-                "  enable_transport = No\n"
-                "  share_instance = No\n"
-                "  shared_instance_port = 37428\n"
-                "  instance_control_port = 37429\n"
-                "  panic_on_interface_error = No\n"
-                "\n"
-                "[logging]\n"
-                "  loglevel = 4\n"
-                "\n"
-                "[interfaces]\n"
-                "\n"
-                "  [[Default Interface]]\n"
-                "    type = AutoInterface\n"
-                "    enabled = No\n"
-            )
+    share_value = "yes" if attach_to_shared_instance else "no"
+    with open(config_path, "w") as f:
+        f.write(
+            "[reticulum]\n"
+            "  enable_transport = no\n"
+            f"  share_instance = {share_value}\n"
+            "  shared_instance_port = 37428\n"
+            "  instance_control_port = 37429\n"
+            # CRITICAL on Android: without this, RNS's LocalClientInterface
+            # defaults to Unix domain sockets, which don't cross Android app
+            # sandbox boundaries — so the python LocalClientInterface would
+            # never find Sideband / Carina / rnsd's LocalServerInterface no
+            # matter what's bound on the TCP probe port. Forcing TCP is the
+            # same fix columba v0.10.x landed; the equivalent kotlin config
+            # in rns-android is TCP by default so this only matters for the
+            # python flavor.
+            "  shared_instance_type = tcp\n"
+            "  panic_on_interface_error = no\n"
+            "\n"
+            "[logging]\n"
+            "  loglevel = 4\n"
+            "\n"
+            "[interfaces]\n"
+            "\n"
+            "  [[Default Interface]]\n"
+            "    type = AutoInterface\n"
+            "    enabled = no\n"
+        )
     return configdir
 
 
 def reticulum_start(configdir):
     """Boots a Reticulum instance in shared-instance-client mode against
-    the config under `configdir`. Returns the Reticulum instance."""
+    the config under `configdir`. Returns the Reticulum instance.
+
+    Resets RNS's class-level state before construction (see
+    [reticulum_reset_class_state]). RNS is designed for one-shot CLI use
+    where process exit clears everything; in our long-running embedded
+    process, the watchdog needs to drive RNS through full teardown →
+    bring-up cycles when the shared-instance host topology changes.
+    """
+    reticulum_reset_class_state()
     return RNS.Reticulum(configdir=configdir)
+
+
+def reticulum_shutdown(reticulum):
+    """Persist Reticulum's in-memory state to disk and detach interfaces,
+    then clear class-level state so the next [reticulum_start] cycle isn't
+    rejected by RNS's CLI-shaped singleton guards.
+
+    Called from PyReticulumService.onDestroy. The columba v0.10.x
+    reticulum_wrapper.py established this teardown order — interfaces
+    first, then persist, then clear sentinels — and it's the version that
+    survives repeated watchdog cycles.
+    """
+    if reticulum is None:
+        return
+
+    # 1. Detach interfaces so sockets close cleanly. Lets the next
+    #    LocalClientInterface bind without colliding with a half-closed
+    #    socket from the previous cycle.
+    try:
+        for iface in list(RNS.Transport.interfaces):
+            if hasattr(iface, "detach"):
+                try: iface.detach()
+                except Exception: pass
+    except Exception: pass
+
+    # 2. Persist path/announce/etc. tables to disk so the user's learned
+    #    network state survives across restarts (Reticulum loads them
+    #    back in __init__ on next boot).
+    try: RNS.Transport.persist_data()
+    except Exception: pass
+
+    # 3. Run upstream's exit_handler — clears _should_run, voids queues,
+    #    runs Identity.exit_handler etc. Safe to call alongside the
+    #    explicit cleanup below.
+    try: RNS.Reticulum.exit_handler()
+    except Exception: pass
+
+    # 4. Clear class-level state. Done here on the shutdown path so the
+    #    next start() finds a clean slate; reticulum_start re-asserts
+    #    this immediately before construction as belt-and-braces.
+    reticulum_reset_class_state()
+
+
+def reticulum_reset_class_state():
+    """Clear class-level state that RNS / Transport / Identity populate
+    on init and never reset. Without this, the second
+    [reticulum_start] cycle fails with `OSError: Attempt to reinitialise
+    Reticulum, when it was already running` (from the Reticulum singleton
+    sentinel) and then `KeyError: 'Attempt to register an already
+    registered destination.'` (from Transport.start re-registering its
+    control destinations into the list that survived from the previous
+    incarnation). Mirrors the cleanup pattern from columba v0.10.x's
+    reticulum_wrapper.shutdown().
+    """
+    # Reticulum singleton sentinel + one-shot guards.
+    setattr(RNS.Reticulum, "_Reticulum__instance", None)
+    setattr(RNS.Reticulum, "_Reticulum__exit_handler_ran", False)
+    setattr(RNS.Reticulum, "_Reticulum__interface_detach_ran", False)
+
+    # Transport is a static class — all state lives on the class itself.
+    # The lists below are everything Transport.start() expects to start
+    # empty.
+    T = RNS.Transport
+    T.owner = None
+    T.identity = None
+    for attr, default in (
+        ("interfaces", list),
+        ("destinations", list),
+        ("pending_links", list),
+        ("active_links", list),
+        ("receipts", list),
+        ("announce_handlers", list),
+        ("discovery_pr_tags", list),
+        ("control_destinations", list),
+        ("control_hashes", list),
+        ("mgmt_destinations", list),
+        ("mgmt_hashes", list),
+        ("remote_management_allowed", list),
+        ("local_client_interfaces", list),
+        ("local_client_rssi_cache", list),
+        ("local_client_snr_cache", list),
+        ("local_client_q_cache", list),
+        # The persistent learned-network tables (path_table, announce_table,
+        # held_announces, blackholed_identities, tunnels) are reloaded from
+        # storage by Transport.start; we just need their in-memory copies
+        # cleared so the load happens fresh.
+        ("path_table", dict),
+        ("announce_table", dict),
+        ("held_announces", dict),
+        ("blackholed_identities", dict),
+        ("tunnels", dict),
+        ("packet_hashlist", set),
+    ):
+        if hasattr(T, attr):
+            setattr(T, attr, default())
+
+    # Identity's known-destinations cache is rebuilt from disk on next
+    # Identity.load_known_destinations call.
+    if hasattr(RNS.Identity, "known_destinations"):
+        RNS.Identity.known_destinations = {}
 
 
 def is_connected_to_shared_instance(reticulum):

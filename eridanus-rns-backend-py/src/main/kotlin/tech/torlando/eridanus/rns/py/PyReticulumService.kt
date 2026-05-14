@@ -52,37 +52,31 @@ class PyReticulumService : Service() {
             }
         }
 
-    /**
-     * Bring up Reticulum's interfaces again — used after the user starts a
-     * shared-instance host post-launch. The python equivalent of rns-android's
-     * `reconnectInterfaces()`. For now this is best-effort; if a deeper
-     * re-init turns out to be needed it lives behind this method.
-     */
-    fun reconnectInterfaces() {
-        val r = reticulum ?: return
-        try {
-            // RNS.Transport doesn't expose a public "reconnect all interfaces"
-            // hook the way rns-android does. As a v0 implementation, re-running
-            // the LocalClientInterface attempt is implicit in the shared-
-            // instance discovery loop RNS already runs internally — calling
-            // detach + reattach via Transport is the right escalation if this
-            // proves insufficient. Tracked in
-            // Memory/eridanus/rns-backend-dual-build.md.
-            Log.i(TAG, "reconnectInterfaces called — relying on RNS internal discovery")
-        } catch (e: Throwable) {
-            Log.w(TAG, "reconnectInterfaces failed", e)
-        }
-    }
-
     private fun bootInWorkerThread() {
         if (startInProgress) return
         startInProgress = true
         worker.execute {
             try {
+                // Probe 127.0.0.1:37428 here, not from the watchdog, so the
+                // probe and the boot can't disagree across a slow restart
+                // window. If a host is present we want share_instance = yes
+                // in the config (forcing RNS through its server-bind →
+                // bind-fails → LocalClientInterface fallback path); if no
+                // host is present we want share_instance = no so we never
+                // accidentally become the shared-instance server ourselves
+                // (the "role inversion" eridanus deliberately avoids).
+                val hostPresent = probeSharedInstance()
                 val py = Python.getInstance()
                 val bridge = py.getModule("event_bridge")
-                val configdir = bridge.callAttr("reticulum_config_dir", filesDir.absolutePath)
-                Log.i(TAG, "Booting Reticulum with configdir=${configdir.toString()}")
+                val configdir = bridge.callAttr(
+                    "reticulum_config_dir",
+                    filesDir.absolutePath,
+                    hostPresent,
+                )
+                Log.i(
+                    TAG,
+                    "Booting Reticulum (configdir=${configdir}, host_present=$hostPresent)",
+                )
                 val r = bridge.callAttr("reticulum_start", configdir)
                 reticulum = r
                 Log.i(TAG, "Reticulum booted successfully")
@@ -92,6 +86,15 @@ class PyReticulumService : Service() {
                 startInProgress = false
             }
         }
+    }
+
+    private fun probeSharedInstance(): Boolean = try {
+        java.net.Socket().use { socket ->
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", 37428), 1_000)
+            true
+        }
+    } catch (_: Exception) {
+        false
     }
 
     override fun onCreate() {
@@ -120,14 +123,20 @@ class PyReticulumService : Service() {
             val r = reticulum
             if (r != null) {
                 Log.i(TAG, "Shutting down Reticulum")
-                // RNS.Reticulum.exit_handler is the cleanest shutdown — same
-                // path the python sigint/sigterm handlers take.
-                Python.getInstance().getModule("RNS")
-                    .get("Reticulum")!!
-                    .callAttr("exit_handler")
+                // Delegate to event_bridge.reticulum_shutdown — that's where
+                // the full teardown sequence (detach interfaces → persist
+                // tables → exit_handler → reset class-level state) lives.
+                // Just calling RNS.Reticulum.exit_handler isn't enough on
+                // its own: Transport's class-level destination/interface
+                // lists survive across exit_handler and trip "already
+                // registered destination" errors on the next watchdog
+                // restart. Same pattern columba v0.10.x's
+                // reticulum_wrapper.shutdown uses.
+                Python.getInstance().getModule("event_bridge")
+                    .callAttr("reticulum_shutdown", r)
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "exit_handler failed", e)
+            Log.w(TAG, "Reticulum shutdown failed", e)
         } finally {
             reticulum = null
             instance = null

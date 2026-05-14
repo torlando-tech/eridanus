@@ -61,6 +61,12 @@ chaquopy {
     }
 }
 
+val coroutinesVersion: String by project
+
 dependencies {
     implementation(project(":eridanus-rns-api"))
+    // delay() in PyRnsBackend.restart() and the boot-worker executor in
+    // PyReticulumService both need kotlinx-coroutines; backend-kt picks this
+    // up transitively from rns-android but backend-py has no such carrier.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion")
 }

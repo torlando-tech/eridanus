@@ -9,6 +9,7 @@ import co.nstant.`in`.cbor.model.Map as CborMap
 import co.nstant.`in`.cbor.model.UnicodeString
 import co.nstant.`in`.cbor.model.UnsignedInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,7 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import tech.torlando.eridanus.EridanusApp
 import tech.torlando.eridanus.rns.RnsAnnounceHandler
 import tech.torlando.eridanus.rns.RnsBackend
@@ -62,9 +66,29 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val TAG = "EridanusViewModel"
+
+        // Cadence for the shared-instance watchdog (see
+        // [startSharedInstanceWatchdog]). 10s mirrors the value the original
+        // auto-recover commit (fix/auto-recover-shared-instance-attach,
+        // 44e6c61) settled on after manual testing on Samsung S21 — tight
+        // enough that swapping hosts feels responsive, loose enough that one
+        // loopback TCP connect every 10s costs nothing meaningful for
+        // battery.
+        private const val WATCHDOG_INTERVAL_MS = 10_000L
+
+        // Brief grace period after restart() returns before re-reading
+        // backend flags. The backend impl already waits internally for its
+        // service to come up, but the ViewModel-side re-read still gets
+        // racy intermediate state if it happens the same instant the
+        // service flips its flag.
+        private const val POST_RESTART_SETTLE_MS = 300L
     }
 
     private val backend: RnsBackend = (application as EridanusApp).rnsBackend
+    /** "kotlin" or "python" — surfaces in the SharedInstanceBannerCard so
+     * trust-skeptical users on the python flavor can confirm the reference
+     * stack is what's running. */
+    val backendIdentifier: String = backend.identifier
     private val prefs = PreferencesManager(application)
     private val identityStore = IdentityStore(application, backend.identities)
     private val hubDao = EridanusDatabase.getInstance(application).hubDao()
@@ -91,6 +115,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private val _connectedToSharedInstance = MutableStateFlow(false)
     val connectedToSharedInstance: StateFlow<Boolean> = _connectedToSharedInstance
+
+    /** Sticky: was true, lost the host, hasn't reconnected yet. Drives the
+     * "lost host — reconnecting" banner state borrowed from v0.10.x columba.
+     * Cleared on successful re-attach. */
+    private val _wasConnectedToSharedInstance = MutableStateFlow(false)
+    val wasConnectedToSharedInstance: StateFlow<Boolean> = _wasConnectedToSharedInstance
+
+    /** True while [restartBackend] is mid-cycle. UI uses this to show a
+     * progress affordance instead of the retry button so the user doesn't
+     * hit retry repeatedly during an in-flight restart. */
+    private val _isRestarting = MutableStateFlow(false)
+    val isRestarting: StateFlow<Boolean> = _isRestarting
 
     // Client state
     private var clientEventJob: kotlinx.coroutines.Job? = null
@@ -171,6 +207,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private var hubIdentity: RnsIdentity? = null
     private var clientIdentity: RnsIdentity? = null
 
+    // Reticulum lifecycle coordination.
+    // - restartMutex serializes teardown+bring-up so the auto-recovery
+    //   watchdog and the user-driven retry button never race each other
+    //   to recreate the backend service.
+    // - watchdogJob is the periodic probe that detects when the
+    //   shared-instance host on 127.0.0.1:37428 appears (we started
+    //   without one) or disappears (host died after we attached), and
+    //   re-runs the attach probe so the user never has to think about
+    //   launch order.
+    private val restartMutex = Mutex()
+    private var watchdogJob: Job? = null
+
     init {
         initReticulum()
         observeNotificationStatus()
@@ -178,64 +226,175 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // Bring up Reticulum via the chosen backend (see
-                // :eridanus-rns-api and the per-flavor source-set wiring in
-                // EridanusApp). The kotlin flavor delegates to rns-android's
-                // foreground service, which wires Room-backed
-                // IdentityStore / PathStore / AnnounceStore so known
-                // destinations / ratchets / announce-cache stay in SQLite
-                // instead of /.reticulum/* on root fs (which the old direct
-                // `Reticulum.start()` path silently fell back to on Android
-                // because `user.home` is empty). The python flavor (pending
-                // chaquopy wiring) will do the equivalent via upstream
-                // python Reticulum running as a shared-instance client.
-                //
-                // shareInstance = false: Eridanus is a chat client with no UI
-                // for configuring Reticulum interfaces. If we became the
-                // shared-instance server, our Reticulum would have no path
-                // to the outside world, and any sibling process that attached
-                // to us (Sideband, Carina, the rns CLI) would also be cut off
-                // — they'd see their own outbound interfaces disabled in
-                // client mode and rely on ours, which is empty. The role
-                // inversion is silent and easy to fall into whenever Eridanus
-                // happens to start before whatever app is supposed to host
-                // the network stack on the device.
-                //
-                // So we explicitly opt out of ever hosting. The backend will
-                // only attach as a client when a shared instance is already
-                // running on 37428 (typically Sideband, Caelum, or a python
-                // "Reticulum for Android" daemon); otherwise it runs
-                // Reticulum standalone with no interfaces — which is also
-                // non-functional, but at least non-functional in a way the
-                // user can fix by starting their shared-instance host app,
-                // rather than poisoning every other app on the device.
-                backend.start(
-                    getApplication(),
-                    RnsBackendConfig(shareInstance = false),
-                )
+            bringUpReticulum()
+            EridanusConnectionService.start(getApplication())
+            startSharedInstanceWatchdog()
+        }
+    }
 
-                // Service init kicks off Reticulum.start(...) + interface
-                // bring-up on a background thread; give it a beat before
-                // we read identityStore. 2s mirrors carina's window.
-                kotlinx.coroutines.delay(2000)
+    /**
+     * Drive one backend bring-up cycle and reflect the result into
+     * [_reticulumStarted] / [_connectedToSharedInstance].
+     *
+     * Idempotent w.r.t. backend.start: if a service is already running
+     * with the same config the start call is effectively a no-op (foreground
+     * service intent re-delivers but the backend short-circuits via its
+     * own CAS guard). Use [restartBackend] when you need a fresh
+     * shared-instance probe — that's the path that tears down the service
+     * first so the probe actually re-runs.
+     */
+    private suspend fun bringUpReticulum() {
+        try {
+            // Bring up Reticulum via the chosen backend (see :eridanus-rns-api
+            // and the per-flavor source-set wiring in EridanusApp). The kotlin
+            // flavor delegates to rns-android's foreground service, which
+            // wires Room-backed IdentityStore / PathStore / AnnounceStore so
+            // known destinations / ratchets / announce-cache stay in SQLite
+            // instead of /.reticulum/* on root fs (which the old direct
+            // Reticulum.start() path silently fell back to on Android because
+            // `user.home` is empty). The python flavor does the equivalent
+            // via upstream python Reticulum running as a shared-instance
+            // client through chaquopy.
+            //
+            // shareInstance = false: Eridanus is a chat client with no UI for
+            // configuring Reticulum interfaces. If we became the
+            // shared-instance server, our Reticulum would have no path to the
+            // outside world, and any sibling process that attached to us
+            // (Sideband, Carina, the rns CLI) would also be cut off — they'd
+            // see their own outbound interfaces disabled in client mode and
+            // rely on ours, which is empty. So we explicitly opt out of ever
+            // hosting; [startSharedInstanceWatchdog] re-drives the probe if a
+            // host comes up after Eridanus does.
+            backend.start(
+                getApplication(),
+                RnsBackendConfig(shareInstance = false),
+            )
 
+            // Service init kicks off Reticulum.start(...) + interface
+            // bring-up on a background thread; give it a beat before we read
+            // identityStore. 2s mirrors the kotlin backend's initial bring-up
+            // window.
+            delay(2000)
+
+            // Identities are persistent across restarts; only generate on
+            // first ever start. Subsequent restartBackend() cycles reuse
+            // the same identities so the peer-identity surface a hub sees
+            // doesn't churn whenever the user toggles a host app.
+            if (hubIdentity == null) {
                 hubIdentity = identityStore.loadHubIdentity()
                     ?: backend.identities.create().also { identityStore.saveHubIdentity(it) }
+            }
+            if (clientIdentity == null) {
                 clientIdentity = identityStore.loadClientIdentity()
                     ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
+            }
 
-                _reticulumStarted.value = backend.isRunning
-                _connectedToSharedInstance.value = backend.connectedToSharedInstance
-                Log.i(
-                    TAG,
-                    "Reticulum started (backend=${backend.identifier}, shared instance: ${_connectedToSharedInstance.value})"
-                )
-
-                EridanusConnectionService.start(getApplication())
+            _reticulumStarted.value = backend.isRunning
+            val connected = backend.connectedToSharedInstance
+            _connectedToSharedInstance.value = connected
+            if (connected) {
+                // Successful (re)attach clears the lost-host banner.
+                _wasConnectedToSharedInstance.value = false
                 registerAnnounceHandler()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Reticulum", e)
+            }
+            Log.i(
+                TAG,
+                "Reticulum started (backend=${backend.identifier}, shared instance: $connected)"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start Reticulum", e)
+        }
+    }
+
+    /**
+     * Tear the backend's host service down and bring it back up.
+     * Serialized through [restartMutex] so concurrent watchdog ticks +
+     * user-tap retry never collide.
+     *
+     * The whole cycle (stop → wait for teardown → restart probe → start →
+     * wait for service to be ready) is handled inside [backend.restart].
+     * Here we just bracket it with the UI flag flips and re-read the
+     * resulting state.
+     */
+    private suspend fun restartBackend() {
+        if (!restartMutex.tryLock()) {
+            // Another restart cycle is already in flight (watchdog and a
+            // user tap landed within the same second). Drop this one —
+            // the in-flight cycle is going to refresh the state we care
+            // about anyway.
+            Log.d(TAG, "restartBackend: already in flight, skipping")
+            return
+        }
+        try {
+            _isRestarting.value = true
+            _reticulumStarted.value = false
+            _connectedToSharedInstance.value = false
+
+            backend.restart(getApplication(), RnsBackendConfig(shareInstance = false))
+            delay(POST_RESTART_SETTLE_MS)
+
+            _reticulumStarted.value = backend.isRunning
+            val connected = backend.connectedToSharedInstance
+            _connectedToSharedInstance.value = connected
+            if (connected) {
+                _wasConnectedToSharedInstance.value = false
+                registerAnnounceHandler()
+            }
+            Log.i(TAG, "Reticulum restart complete (shared instance: $connected)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restart Reticulum", e)
+        } finally {
+            _isRestarting.value = false
+            restartMutex.unlock()
+        }
+    }
+
+    /**
+     * Periodic watchdog that compares actual shared-instance topology
+     * (is something bound to 127.0.0.1:37428 right now?) to our current
+     * attached state, and triggers [restartBackend] whenever they
+     * disagree. Lets the user start, stop, or swap shared-instance host
+     * apps after Eridanus is already running without relaunching.
+     *
+     * Cases this handles:
+     *
+     * - Eridanus started before the host: probe goes false→true as soon
+     *   as the user launches Sideband / Carina / rnsd, watchdog re-runs
+     *   the attach probe. ~10s recovery in practice.
+     * - Host killed while Eridanus is attached: probe goes true→false,
+     *   watchdog flips us back to standalone and sets
+     *   [_wasConnectedToSharedInstance] so the lost-host banner shows.
+     * - Host swapped (Sideband off, different app takes the port):
+     *   probe oscillates false→true, watchdog re-attaches to whoever is
+     *   bound now. Same stored identity, so peers keep recognising us.
+     */
+    private fun startSharedInstanceWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                try {
+                    val probe = backend.isSharedInstanceRunning()
+                    val attached = _connectedToSharedInstance.value
+                    if (probe != attached) {
+                        if (attached && !probe) {
+                            // We were attached; host went away. Set the
+                            // sticky flag before the restart wipes our
+                            // current attach state so the banner can show
+                            // the lost-host card during the recovery
+                            // attempt.
+                            _wasConnectedToSharedInstance.value = true
+                        }
+                        Log.i(
+                            TAG,
+                            "Watchdog: shared-instance topology changed " +
+                                "(probe=$probe, attached=$attached) — restarting backend",
+                        )
+                        restartBackend()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Watchdog probe failed: ${e.message}")
+                }
             }
         }
     }
@@ -280,28 +439,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * User-driven retry from the "No shared instance — tap to retry"
+     * banner. Delegates to [restartBackend], which is what the background
+     * watchdog also uses, so the two paths share a single serialized
+     * teardown+bring-up cycle.
+     */
     fun retrySharedInstance() {
         viewModelScope.launch(Dispatchers.IO) {
-            // The backend picks the shared-instance role (client-of-existing
-            // vs server) at startup based on whether a listener is already
-            // bound on the configured port. To "retry" we ask it to
-            // re-probe by reconnecting its interfaces; if a shared instance
-            // has since appeared on the port (e.g. rnsd came up after the
-            // app started, or adb reverse was set up late) the rebuilt
-            // local-client interface will attach this time.
-            if (!backend.isRunning) {
-                Log.w(TAG, "Retry shared instance: backend not yet running")
-                _connectedToSharedInstance.value = false
-                return@launch
-            }
-            backend.reconnectInterfaces()
-            kotlinx.coroutines.delay(500)
-            val connected = backend.connectedToSharedInstance
-            _connectedToSharedInstance.value = connected
-            if (connected) {
-                registerAnnounceHandler()
-            }
-            Log.i(TAG, "Retry shared instance: connected=$connected")
+            restartBackend()
         }
     }
 

@@ -1,7 +1,9 @@
 package tech.torlando.eridanus.rns.py
 
 import android.content.Context
+import android.util.Log
 import com.chaquo.python.Python
+import kotlinx.coroutines.delay
 import tech.torlando.eridanus.rns.RnsBackend
 import tech.torlando.eridanus.rns.RnsBackendConfig
 
@@ -65,8 +67,26 @@ class PyRnsBackend(context: Context) : RnsBackend {
         }
     }
 
-    override fun reconnectInterfaces() {
-        PyReticulumService.getInstance()?.reconnectInterfaces()
+    override suspend fun restart(context: Context, config: RnsBackendConfig) {
+        // Upstream Reticulum decides its shared-instance role at
+        // RNS.Reticulum.__init__ time and exposes no in-place rebind hook,
+        // so the only way to re-run the auto-attach probe is a full
+        // service teardown + bring-up. PyReticulumService.onDestroy calls
+        // RNS.Reticulum.exit_handler() which is what releases the embedded
+        // interpreter's RNS state cleanly.
+        Log.i(TAG, "Restarting Reticulum (python) to re-run shared-instance attach probe")
+        stop(context)
+
+        val teardownDeadline = System.currentTimeMillis() + TEARDOWN_TIMEOUT_MS
+        while (System.currentTimeMillis() < teardownDeadline &&
+            PyReticulumService.getInstance() != null
+        ) {
+            delay(POLL_INTERVAL_MS)
+        }
+        delay(POST_TEARDOWN_GRACE_MS)
+
+        start(context, config)
+        delay(START_GRACE_MS)
     }
 
     override val identities = PyRnsIdentityFactory(rns)
@@ -74,4 +94,12 @@ class PyRnsBackend(context: Context) : RnsBackend {
     override val links = PyRnsLinkFactory(rns)
     override val resources = PyRnsResourceFactory(rns)
     override val transport = PyRnsTransport(rns)
+
+    companion object {
+        private const val TAG = "PyRnsBackend"
+        private const val TEARDOWN_TIMEOUT_MS = 5_000L
+        private const val POLL_INTERVAL_MS = 100L
+        private const val POST_TEARDOWN_GRACE_MS = 300L
+        private const val START_GRACE_MS = 2_500L
+    }
 }
