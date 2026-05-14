@@ -1,78 +1,77 @@
 package tech.torlando.eridanus.rns.py
 
 import android.content.Context
-import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import com.chaquo.python.Python
 import tech.torlando.eridanus.rns.RnsBackend
 import tech.torlando.eridanus.rns.RnsBackendConfig
-import tech.torlando.eridanus.rns.RnsDestination
-import tech.torlando.eridanus.rns.RnsDestinationDirection
-import tech.torlando.eridanus.rns.RnsDestinationFactory
-import tech.torlando.eridanus.rns.RnsDestinationType
-import tech.torlando.eridanus.rns.RnsIdentity
-import tech.torlando.eridanus.rns.RnsIdentityFactory
-import tech.torlando.eridanus.rns.RnsLink
-import tech.torlando.eridanus.rns.RnsLinkFactory
-import tech.torlando.eridanus.rns.RnsResource
-import tech.torlando.eridanus.rns.RnsResourceFactory
-import tech.torlando.eridanus.rns.RnsTransport
 
-class PyRnsBackend : RnsBackend {
+class PyRnsBackend(context: Context) : RnsBackend {
+
+    init {
+        // PyRnsBackend assumes Python has already been started (by the
+        // per-flavor RnsBackendProvider). It's tolerable to call Python
+        // .start again — chaquopy's start() is idempotent — but doing it
+        // here would couple the backend to the Application's class loader
+        // earlier than necessary.
+        require(Python.isStarted()) {
+            "Python interpreter must be started before constructing PyRnsBackend. " +
+                "Call provideRnsBackend(context) from the python flavor source set."
+        }
+    }
+
+    private val appContext = context.applicationContext
+    private val python = Python.getInstance()
+    private val rns = python.getModule("RNS")
+
     override val identifier: String = "python"
 
-    override fun start(context: Context, config: RnsBackendConfig): Nothing = notWiredYet()
-    override fun stop(context: Context): Nothing = notWiredYet()
-    override val isRunning: Boolean get() = notWiredYet()
-    override val connectedToSharedInstance: Boolean get() = notWiredYet()
-    override fun isSharedInstanceRunning(port: Int): Boolean = notWiredYet()
-    override fun reconnectInterfaces(): Nothing = notWiredYet()
-
-    override val identities: RnsIdentityFactory = NotWired
-    override val destinations: RnsDestinationFactory = NotWired
-    override val links: RnsLinkFactory = NotWired
-    override val resources: RnsResourceFactory = NotWired
-    override val transport: RnsTransport = NotWired
-
-    private object NotWired : RnsIdentityFactory, RnsDestinationFactory, RnsLinkFactory, RnsResourceFactory, RnsTransport {
-        override fun create(): RnsIdentity = notWiredYet()
-        override fun recall(destHash: ByteArray): RnsIdentity? = notWiredYet()
-        override fun fromBytes(bytes: ByteArray): RnsIdentity? = notWiredYet()
-
-        override fun appAndAspectsFromName(name: String): Pair<String, List<String>>? = notWiredYet()
-        override fun create(
-            identity: RnsIdentity,
-            direction: RnsDestinationDirection,
-            type: RnsDestinationType,
-            appName: String,
-            vararg aspects: String,
-        ): RnsDestination = notWiredYet()
-
-        override fun create(
-            destination: RnsDestination,
-            establishedCallback: (RnsLink) -> Unit,
-            closedCallback: (RnsLink) -> Unit,
-        ): RnsLink = notWiredYet()
-
-        override fun create(
-            data: ByteArray,
-            link: RnsLink,
-            advertise: Boolean,
-            autoCompress: Boolean,
-            requestId: ByteArray?,
-        ): RnsResource = notWiredYet()
-
-        override fun findDestination(hash: ByteArray): RnsDestination? = notWiredYet()
-        override fun requestPath(hash: ByteArray): Nothing = notWiredYet()
-        override fun hasPath(hash: ByteArray): Boolean = notWiredYet()
-        override fun registerDestination(destination: RnsDestination): Nothing = notWiredYet()
-        override fun deregisterDestination(destination: RnsDestination): Nothing = notWiredYet()
-        override fun registerAnnounceHandler(handler: RnsAnnounceHandler): Nothing = notWiredYet()
+    override fun start(context: Context, config: RnsBackendConfig) {
+        // Bring up Reticulum on the host service. RnsBackendConfig.shareInstance
+        // is intentionally not honored on the python backend yet — eridanus
+        // is shared-instance-client-only and event_bridge.reticulum_config_dir
+        // hardcodes that. (Wiring shareInstance through later is a few-line
+        // change in the config writer.) Treat shareInstance=true as a misuse
+        // for now.
+        require(!config.shareInstance) {
+            "PyRnsBackend currently supports shared-instance-client mode only " +
+                "(matches the kotlin flavor's default in this app)."
+        }
+        PyReticulumService.start(context)
     }
 
-    companion object {
-        private fun notWiredYet(): Nothing = throw NotImplementedError(
-            "PyRnsBackend is scaffolded but not wired. " +
-                "Chaquopy + upstream RNS bundle are pending; see " +
-                "Memory/eridanus/rns-backend-dual-build.md for the plan."
-        )
+    override fun stop(context: Context) {
+        PyReticulumService.stop(context)
     }
+
+    override val isRunning: Boolean
+        get() = PyReticulumService.getInstance()?.isRunning == true
+
+    override val connectedToSharedInstance: Boolean
+        get() = PyReticulumService.getInstance()?.connectedToSharedInstance == true
+
+    override fun isSharedInstanceRunning(port: Int): Boolean {
+        // Upstream RNS doesn't expose a "is_shared_instance_running" probe;
+        // the way eridanus uses this is "is somebody listening on the
+        // local-instance port?". A trivial socket connect attempt suffices
+        // and avoids dragging python into a synchronous check on the UI
+        // path.
+        return try {
+            java.net.Socket().use { socket ->
+                socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 1_000)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun reconnectInterfaces() {
+        PyReticulumService.getInstance()?.reconnectInterfaces()
+    }
+
+    override val identities = PyRnsIdentityFactory(rns)
+    override val destinations = PyRnsDestinationFactory(rns)
+    override val links = PyRnsLinkFactory(rns)
+    override val resources = PyRnsResourceFactory(rns)
+    override val transport = PyRnsTransport(rns)
 }
