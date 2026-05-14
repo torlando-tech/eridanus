@@ -17,12 +17,11 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import network.reticulum.Reticulum
-import network.reticulum.android.ReticulumConfig
-import network.reticulum.android.ReticulumService
-import network.reticulum.identity.Identity
-import network.reticulum.transport.AnnounceHandler
-import network.reticulum.transport.Transport
+import tech.torlando.eridanus.EridanusApp
+import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import tech.torlando.eridanus.rns.RnsBackend
+import tech.torlando.eridanus.rns.RnsBackendConfig
+import tech.torlando.eridanus.rns.RnsIdentity
 import tech.torlando.eridanus.data.DarkModeOption
 import tech.torlando.eridanus.data.DefaultRoomConfig
 import tech.torlando.eridanus.data.IdentityStore
@@ -65,8 +64,9 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         private const val TAG = "EridanusViewModel"
     }
 
+    private val backend: RnsBackend = (application as EridanusApp).rnsBackend
     private val prefs = PreferencesManager(application)
-    private val identityStore = IdentityStore(application)
+    private val identityStore = IdentityStore(application, backend.identities)
     private val hubDao = EridanusDatabase.getInstance(application).hubDao()
 
     val theme: StateFlow<PresetTheme> = prefs.theme.stateIn(
@@ -168,8 +168,8 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     )
 
     // Identities
-    private var hubIdentity: Identity? = null
-    private var clientIdentity: Identity? = null
+    private var hubIdentity: RnsIdentity? = null
+    private var clientIdentity: RnsIdentity? = null
 
     init {
         initReticulum()
@@ -179,14 +179,17 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Bring up Reticulum via the rns-android foreground service.
-                // The service resolves configDir against the app's filesDir,
-                // wires Room-backed IdentityStore / PathStore / AnnounceStore
-                // (so known_destinations / ratchets / announce-cache stay in
-                // SQLite instead of /.reticulum/* on root fs — which the old
-                // direct `Reticulum.start()` path silently fell back to on
-                // Android because `user.home` is empty), and auto-detects
-                // an existing shared instance on the configured port.
+                // Bring up Reticulum via the chosen backend (see
+                // :eridanus-rns-api and the per-flavor source-set wiring in
+                // EridanusApp). The kotlin flavor delegates to rns-android's
+                // foreground service, which wires Room-backed
+                // IdentityStore / PathStore / AnnounceStore so known
+                // destinations / ratchets / announce-cache stay in SQLite
+                // instead of /.reticulum/* on root fs (which the old direct
+                // `Reticulum.start()` path silently fell back to on Android
+                // because `user.home` is empty). The python flavor (pending
+                // chaquopy wiring) will do the equivalent via upstream
+                // python Reticulum running as a shared-instance client.
                 //
                 // shareInstance = false: Eridanus is a chat client with no UI
                 // for configuring Reticulum interfaces. If we became the
@@ -199,38 +202,34 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 // happens to start before whatever app is supposed to host
                 // the network stack on the device.
                 //
-                // So we explicitly opt out of ever hosting. ReticulumService
-                // will only attach as a client when a shared instance is
-                // already running on 37428 (typically Sideband, Caelum, or
-                // a python "Reticulum for Android" daemon); otherwise it
-                // runs Reticulum standalone with no interfaces — which is
-                // also non-functional, but at least non-functional in a way
-                // the user can fix by starting their shared-instance host
-                // app, rather than poisoning every other app on the device.
-                ReticulumService.start(
+                // So we explicitly opt out of ever hosting. The backend will
+                // only attach as a client when a shared instance is already
+                // running on 37428 (typically Sideband, Caelum, or a python
+                // "Reticulum for Android" daemon); otherwise it runs
+                // Reticulum standalone with no interfaces — which is also
+                // non-functional, but at least non-functional in a way the
+                // user can fix by starting their shared-instance host app,
+                // rather than poisoning every other app on the device.
+                backend.start(
                     getApplication(),
-                    ReticulumConfig(shareInstance = false),
+                    RnsBackendConfig(shareInstance = false),
                 )
 
                 // Service init kicks off Reticulum.start(...) + interface
                 // bring-up on a background thread; give it a beat before
-                // we read identityStore. ReticulumService.getInstance()
-                // returns null until onCreate runs, then non-null forever
-                // (single-instance service). 2s mirrors carina's window.
+                // we read identityStore. 2s mirrors carina's window.
                 kotlinx.coroutines.delay(2000)
 
                 hubIdentity = identityStore.loadHubIdentity()
-                    ?: Identity.create().also { identityStore.saveHubIdentity(it) }
+                    ?: backend.identities.create().also { identityStore.saveHubIdentity(it) }
                 clientIdentity = identityStore.loadClientIdentity()
-                    ?: Identity.create().also { identityStore.saveClientIdentity(it) }
+                    ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
 
-                val service = ReticulumService.getInstance()
-                _reticulumStarted.value = service?.isRunning() == true
-                _connectedToSharedInstance.value =
-                    service?.getReticulum()?.connectToSharedInstance == true
+                _reticulumStarted.value = backend.isRunning
+                _connectedToSharedInstance.value = backend.connectedToSharedInstance
                 Log.i(
                     TAG,
-                    "Reticulum started (shared instance: ${_connectedToSharedInstance.value})"
+                    "Reticulum started (backend=${backend.identifier}, shared instance: ${_connectedToSharedInstance.value})"
                 )
 
                 EridanusConnectionService.start(getApplication())
@@ -283,22 +282,21 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun retrySharedInstance() {
         viewModelScope.launch(Dispatchers.IO) {
-            // rns-android's ReticulumService picks the shared-instance role
-            // (client-of-existing vs server) at startup based on whether a
-            // listener is already bound on the configured port. To "retry"
-            // we ask it to re-probe by reconnecting its interfaces; if a
-            // shared instance has since appeared on the port (e.g. rnsd
-            // came up after the app started, or adb reverse was set up
-            // late) the rebuilt LocalClientInterface will attach this time.
-            val service = ReticulumService.getInstance()
-            if (service == null) {
-                Log.w(TAG, "Retry shared instance: service not yet running")
+            // The backend picks the shared-instance role (client-of-existing
+            // vs server) at startup based on whether a listener is already
+            // bound on the configured port. To "retry" we ask it to
+            // re-probe by reconnecting its interfaces; if a shared instance
+            // has since appeared on the port (e.g. rnsd came up after the
+            // app started, or adb reverse was set up late) the rebuilt
+            // local-client interface will attach this time.
+            if (!backend.isRunning) {
+                Log.w(TAG, "Retry shared instance: backend not yet running")
                 _connectedToSharedInstance.value = false
                 return@launch
             }
-            service.reconnectInterfaces()
+            backend.reconnectInterfaces()
             kotlinx.coroutines.delay(500)
-            val connected = service.getReticulum()?.connectToSharedInstance == true
+            val connected = backend.connectedToSharedInstance
             _connectedToSharedInstance.value = connected
             if (connected) {
                 registerAnnounceHandler()
@@ -309,11 +307,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private fun registerAnnounceHandler() {
         try {
-            val handler = AnnounceHandler { destHash, _, appData ->
+            val handler = RnsAnnounceHandler { destHash, _, appData ->
                 handleHubAnnounce(destHash, appData)
                 true
             }
-            Transport.registerAnnounceHandler(handler)
+            backend.transport.registerAnnounceHandler(handler)
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)
@@ -370,7 +368,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 EridanusConnectionService.start(getApplication())
-                val client = RrcClient(id, nickname = nickname.value.ifEmpty { null })
+                val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
@@ -604,7 +602,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 EridanusConnectionService.start(getApplication())
-                val client = RrcClient(clientId, nickname = nickname.value.ifEmpty { null })
+                val client = RrcClient(clientId, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
@@ -665,7 +663,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val id = hubIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val hub = RrcHub(id, prefs.getHubName())
+                val hub = RrcHub(id, backend, prefs.getHubName())
                 hub.greeting = prefs.getHubGreeting().ifEmpty { null }
                 hub.defaultRooms = prefs.getHubDefaultRooms()
                     .filter { it.name.isNotBlank() }

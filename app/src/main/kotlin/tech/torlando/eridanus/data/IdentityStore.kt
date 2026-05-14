@@ -5,9 +5,10 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import network.reticulum.identity.Identity
+import tech.torlando.eridanus.rns.RnsIdentity
+import tech.torlando.eridanus.rns.RnsIdentityFactory
 
-class IdentityStore(context: Context) {
+class IdentityStore(context: Context, private val identities: RnsIdentityFactory) {
 
     companion object {
         private const val TAG = "IdentityStore"
@@ -29,30 +30,30 @@ class IdentityStore(context: Context) {
         )
     }
 
-    fun saveHubIdentity(identity: Identity) {
+    fun saveHubIdentity(identity: RnsIdentity) {
         prefs.edit().putString(KEY_HUB_IDENTITY, identity.getPrivateKey().toHexString()).apply()
         Log.d(TAG, "Hub identity saved")
     }
 
-    fun loadHubIdentity(): Identity? {
+    fun loadHubIdentity(): RnsIdentity? {
         val hex = prefs.getString(KEY_HUB_IDENTITY, null) ?: return null
         return try {
-            Identity.fromBytes(hex.hexToByteArray())
+            identities.fromBytes(hex.hexToByteArray())
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load hub identity", e)
             null
         }
     }
 
-    fun saveClientIdentity(identity: Identity) {
+    fun saveClientIdentity(identity: RnsIdentity) {
         prefs.edit().putString(KEY_CLIENT_IDENTITY, identity.getPrivateKey().toHexString()).apply()
         Log.d(TAG, "Client identity saved")
     }
 
-    fun loadClientIdentity(): Identity? {
+    fun loadClientIdentity(): RnsIdentity? {
         val hex = prefs.getString(KEY_CLIENT_IDENTITY, null) ?: return null
         return try {
-            Identity.fromBytes(hex.hexToByteArray())
+            identities.fromBytes(hex.hexToByteArray())
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load client identity", e)
             null

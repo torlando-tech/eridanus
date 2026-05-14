@@ -18,3 +18,6 @@ dependencyResolutionManagement {
 rootProject.name = "eridanus"
 
 include(":app")
+include(":eridanus-rns-api")
+include(":eridanus-rns-backend-kt")
+include(":eridanus-rns-backend-py")

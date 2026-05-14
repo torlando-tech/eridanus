@@ -132,6 +132,24 @@ android {
         }
     }
 
+    // rnsImpl flavor dimension — see Memory/eridanus/rns-backend-dual-build.md.
+    // `kotlin` ships reticulum-kt embedded; `python` will (after chaquopy
+    // wiring lands) embed chaquopy + upstream RNS. Both attach to a shared
+    // instance the same way at runtime; the difference is which code runs
+    // the crypto / link state machine / packet framing in-process.
+    flavorDimensions += "rnsImpl"
+    productFlavors {
+        create("kotlin") {
+            dimension = "rnsImpl"
+            // Default APK filename pattern: eridanus-kotlin-...
+        }
+        create("python") {
+            dimension = "rnsImpl"
+            // python flavor scaffolding only — runtime calls into PyRnsBackend
+            // throw NotImplementedError until chaquopy wires through.
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -155,8 +173,15 @@ android {
 }
 
 dependencies {
-    // Reticulum (published to JitPack from torlando-tech/reticulum-kt)
-    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.19")
+    // Backend-neutral RNS contract — app code consumes this; the chosen
+    // flavor provides the backend that implements it.
+    implementation(project(":eridanus-rns-api"))
+
+    // Flavor-bound backends. The Detekt rule NoDirectReticulumKtImportFromApp
+    // (to be added in a follow-up) keeps app code from depending on either
+    // backend's internals — only the API.
+    "kotlinImplementation"(project(":eridanus-rns-backend-kt"))
+    "pythonImplementation"(project(":eridanus-rns-backend-py"))
 
     // CBOR encoding (RRC protocol uses CBOR)
     implementation("co.nstant.in:cbor:0.9")

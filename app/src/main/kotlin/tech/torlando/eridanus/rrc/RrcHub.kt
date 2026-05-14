@@ -7,13 +7,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import network.reticulum.common.DestinationDirection
-import network.reticulum.common.DestinationType
-import network.reticulum.destination.Destination
-import network.reticulum.identity.Identity
-import network.reticulum.link.Link
-import network.reticulum.resource.Resource
-import network.reticulum.transport.Transport
+import tech.torlando.eridanus.rns.RnsBackend
+import tech.torlando.eridanus.rns.RnsDestination
+import tech.torlando.eridanus.rns.RnsDestinationDirection
+import tech.torlando.eridanus.rns.RnsDestinationType
+import tech.torlando.eridanus.rns.RnsIdentity
+import tech.torlando.eridanus.rns.RnsLink
 import java.security.MessageDigest
 import java.security.SecureRandom
 import tech.torlando.eridanus.rrc.RrcConstants.B_WELCOME_CAPS
@@ -50,7 +49,7 @@ private class RateState(
 )
 
 data class HubSession(
-    val link: Link,
+    val link: RnsLink,
     var welcomed: Boolean = false,
     var nick: String? = null,
     var peerHash: ByteArray? = null,
@@ -60,7 +59,8 @@ data class HubSession(
 
 
 class RrcHub(
-    internal val identity: Identity,
+    internal val identity: RnsIdentity,
+    private val backend: RnsBackend,
     var hubName: String = "Eridanus Hub",
 ) {
     companion object {
@@ -72,9 +72,9 @@ class RrcHub(
     var greeting: String? = null
     var defaultRooms: List<tech.torlando.eridanus.data.DefaultRoomConfig> = emptyList()
 
-    private var destination: Destination? = null
-    private val sessions = mutableMapOf<Link, HubSession>()
-    private val rateLimits = mutableMapOf<Link, RateState>()
+    private var destination: RnsDestination? = null
+    private val sessions = mutableMapOf<RnsLink, HubSession>()
+    private val rateLimits = mutableMapOf<RnsLink, RateState>()
     internal val roomManager = HubRoomManager()
     private val commandHandler = HubCommandHandler(this, roomManager)
     private var defaultRoomInitialized = false
@@ -94,21 +94,20 @@ class RrcHub(
     fun start() {
         if (running) return
 
-        val parsed = Destination.appAndAspectsFromName(DEST_NAME) ?: return
+        val parsed = backend.destinations.appAndAspectsFromName(DEST_NAME) ?: return
         val (appName, aspects) = parsed
 
-        val dest = Destination.create(
+        val dest = backend.destinations.create(
             identity,
-            DestinationDirection.IN,
-            DestinationType.SINGLE,
+            RnsDestinationDirection.IN,
+            RnsDestinationType.SINGLE,
             appName,
             *aspects.toTypedArray(),
         )
 
-        Transport.registerDestination(dest)
+        backend.transport.registerDestination(dest)
 
-        dest.setLinkEstablishedCallback { linkAny ->
-            val link = linkAny as? Link ?: return@setLinkEstablishedCallback
+        dest.setLinkEstablishedCallback { link ->
             onLinkEstablished(link)
         }
 
@@ -176,8 +175,8 @@ class RrcHub(
     private fun pingIdleClients() {
         val now = System.nanoTime()
         val timeoutNanos = pingTimeoutSeconds * 1_000_000_000L
-        val toTeardown = mutableListOf<Link>()
-        val toPing = mutableListOf<Link>()
+        val toTeardown = mutableListOf<RnsLink>()
+        val toPing = mutableListOf<RnsLink>()
 
         synchronized(sessions) {
             for ((link, session) in sessions) {
@@ -210,7 +209,7 @@ class RrcHub(
         }
     }
 
-    private fun refillAndTake(link: Link): Boolean {
+    private fun refillAndTake(link: RnsLink): Boolean {
         val state = rateLimits[link] ?: return true
         val now = System.nanoTime()
         val perMin = RrcConstants.DEFAULT_RATE_LIMIT_MSGS_PER_MINUTE.toDouble().coerceAtLeast(1.0)
@@ -238,7 +237,7 @@ class RrcHub(
         roomManager.clear()
         defaultRoomInitialized = false
         _connectedClients.value = 0
-        destination?.let { Transport.deregisterDestination(it) }
+        destination?.let { backend.transport.deregisterDestination(it) }
         destination = null
         Log.i(TAG, "Hub stopped")
     }
@@ -281,12 +280,12 @@ class RrcHub(
 
     // ── Internal accessors for command handler ─────────────────────────
 
-    internal fun getSession(link: Link): HubSession? = sessions[link]
+    internal fun getSession(link: RnsLink): HubSession? = sessions[link]
 
-    internal fun allSessions(): List<Pair<Link, HubSession>> =
+    internal fun allSessions(): List<Pair<RnsLink, HubSession>> =
         sessions.entries.map { it.key to it.value }
 
-    internal fun sendNotice(link: Link, room: String?, text: String) {
+    internal fun sendNotice(link: RnsLink, room: String?, text: String) {
         val env = RrcEnvelope.make(T_NOTICE, src = identity.hash, room = room, body = text)
         val payload = RrcCodec.encode(env)
         val mdu = link.getMdu()
@@ -306,7 +305,7 @@ class RrcHub(
         sendNoticeChunked(link, room, text, mdu)
     }
 
-    private fun sendNoticeChunked(link: Link, room: String?, text: String, mdu: Int) {
+    private fun sendNoticeChunked(link: RnsLink, room: String?, text: String, mdu: Int) {
         var remaining = text
         var chunkSize = MAX_NOTICE_CHUNK_CHARS
         while (remaining.isNotEmpty()) {
@@ -332,7 +331,7 @@ class RrcHub(
         }
     }
 
-    private fun sendViaResource(link: Link, kind: String, payload: ByteArray, room: String?): Boolean {
+    private fun sendViaResource(link: RnsLink, kind: String, payload: ByteArray, room: String?): Boolean {
         val rid = ByteArray(8).also { SecureRandom().nextBytes(it) }
         val sha256 = MessageDigest.getInstance("SHA-256").digest(payload)
 
@@ -355,7 +354,7 @@ class RrcHub(
 
         // Create and advertise the resource
         return try {
-            Resource.create(
+            backend.resources.create(
                 data = payload,
                 link = link,
                 advertise = true,
@@ -370,18 +369,18 @@ class RrcHub(
         }
     }
 
-    internal fun sendError(link: Link, text: String, room: String? = null) {
+    internal fun sendError(link: RnsLink, text: String, room: String? = null) {
         val env = RrcEnvelope.make(T_ERROR, src = identity.hash, room = room, body = text)
         sendPacket(link, env)
     }
 
-    internal fun updateNickIndex(@Suppress("UNUSED_PARAMETER") link: Link, @Suppress("UNUSED_PARAMETER") oldNick: String?, @Suppress("UNUSED_PARAMETER") newNick: String) {
+    internal fun updateNickIndex(@Suppress("UNUSED_PARAMETER") link: RnsLink, @Suppress("UNUSED_PARAMETER") oldNick: String?, @Suppress("UNUSED_PARAMETER") newNick: String) {
         // Nick tracked on session; command handler iterates sessions for lookup
     }
 
     // ── Link lifecycle ─────────────────────────────────────────────────
 
-    private fun onLinkEstablished(link: Link) {
+    private fun onLinkEstablished(link: RnsLink) {
         Log.i(TAG, "New link established from remote")
         val session = HubSession(link)
         sessions[link] = session
@@ -391,12 +390,12 @@ class RrcHub(
         link.setLinkClosedCallback { closedLink ->
             onLinkClosed(closedLink)
         }
-        link.setPacketCallback { data, _ ->
+        link.setPacketCallback { data ->
             onPacket(link, data)
         }
     }
 
-    private fun onLinkClosed(link: Link) {
+    private fun onLinkClosed(link: RnsLink) {
         val session = sessions.remove(link) ?: return
         rateLimits.remove(link)
         val peerHash = session.peerHash
@@ -425,7 +424,7 @@ class RrcHub(
     // ── Packet handling ────────────────────────────────────────────────
 
     @Suppress("UNCHECKED_CAST")
-    private fun onPacket(link: Link, data: ByteArray) {
+    private fun onPacket(link: RnsLink, data: ByteArray) {
         val session = sessions[link] ?: return
 
         if (session.peerHash == null) {
@@ -488,7 +487,7 @@ class RrcHub(
 
     // ── T_HELLO (re-auth) ──────────────────────────────────────────────
 
-    private fun handleReHello(link: Link, session: HubSession, env: Map<Int, Any?>) {
+    private fun handleReHello(link: RnsLink, session: HubSession, env: Map<Int, Any?>) {
         val oldRooms = session.rooms.toSet()
         session.rooms.clear()
         session.welcomed = false
@@ -504,7 +503,7 @@ class RrcHub(
 
     // ── T_JOIN ─────────────────────────────────────────────────────────
 
-    private fun handleJoin(link: Link, session: HubSession, env: Map<Int, Any?>) {
+    private fun handleJoin(link: RnsLink, session: HubSession, env: Map<Int, Any?>) {
         val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
         if (room.isNullOrEmpty()) {
             sendError(link, "JOIN requires room name")
@@ -578,7 +577,7 @@ class RrcHub(
 
     // ── T_PART ─────────────────────────────────────────────────────────
 
-    private fun handlePart(link: Link, session: HubSession, env: Map<Int, Any?>) {
+    private fun handlePart(link: RnsLink, session: HubSession, env: Map<Int, Any?>) {
         val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
         if (room.isNullOrEmpty()) {
             sendError(link, "PART requires room name")
@@ -611,7 +610,7 @@ class RrcHub(
 
     // ── T_MSG / T_NOTICE ───────────────────────────────────────────────
 
-    private fun handleMessage(link: Link, session: HubSession, env: Map<Int, Any?>) {
+    private fun handleMessage(link: RnsLink, session: HubSession, env: Map<Int, Any?>) {
         val body = env[K_BODY]
         val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
         val peerHash = session.peerHash
@@ -682,7 +681,7 @@ class RrcHub(
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
-    private fun sendWelcome(link: Link) {
+    private fun sendWelcome(link: RnsLink) {
         val welcomeBody = mapOf<Int, Any?>(
             B_WELCOME_HUB to hubName,
             B_WELCOME_VER to 1,
@@ -699,7 +698,7 @@ class RrcHub(
         sendPacket(link, env)
     }
 
-    private fun sendPacket(link: Link, env: Map<Int, Any?>) {
+    private fun sendPacket(link: RnsLink, env: Map<Int, Any?>) {
         try {
             val payload = RrcCodec.encode(env)
             link.send(payload)
