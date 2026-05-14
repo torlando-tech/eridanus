@@ -89,6 +89,13 @@ class PyRnsBackend(context: Context) : RnsBackend {
         delay(START_GRACE_MS)
     }
 
+    override fun setForegroundStatus(text: String) {
+        // PyReticulumService's foreground notification is eridanus's single
+        // persistent notification on the python flavor — reflect the
+        // app-level status line straight into it.
+        PyReticulumService.getInstance()?.updateStatus(text)
+    }
+
     override val identities = PyRnsIdentityFactory(rns)
     override val destinations = PyRnsDestinationFactory(rns)
     override val links = PyRnsLinkFactory(rns)

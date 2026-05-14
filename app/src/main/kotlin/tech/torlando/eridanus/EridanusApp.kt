@@ -22,10 +22,12 @@ class EridanusApp : Application() {
         // :eridanus-rns-backend-kt module.
         rnsBackend = provideRnsBackend(this)
 
-        // Notification channels are created lazily by their owning services:
-        //   - the rns-android foreground service creates the "reticulum"
-        //     channel in its onCreate().
-        //   - `tech.torlando.eridanus.service.EridanusConnectionService`
-        //     creates "eridanus_connection" for app-domain status updates.
+        // The RNS-hosting foreground service owns the app's single
+        // persistent notification — rns-android's ReticulumService on the
+        // kotlin flavor, PyReticulumService on the python flavor — and
+        // each creates its own notification channel in onCreate().
+        // App-level status ("Connected to hub", …) is pushed into that
+        // notification via RnsBackend.setForegroundStatus (python flavor
+        // today; kotlin once reticulum-kt grows a status hook).
     }
 }

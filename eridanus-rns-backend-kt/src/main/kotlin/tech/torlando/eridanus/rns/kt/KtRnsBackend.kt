@@ -74,6 +74,18 @@ class KtRnsBackend : RnsBackend {
         delay(START_GRACE_MS)
     }
 
+    override fun setForegroundStatus(text: String) {
+        // No-op on the kotlin flavor. rns-android's ReticulumService owns
+        // its foreground notification and builds it from its own
+        // ConnectionSnapshot (Client/Transport mode + interface
+        // breakdown) — there's no hook for a consuming app to inject its
+        // own status line. Until reticulum-kt grows one, the kotlin
+        // flavor simply shows rns-android's network-status notification;
+        // eridanus's app-level status ("Connected to hub", …) is still
+        // visible in-app. Tracked: Obsidian note "reticulum-kt —
+        // ReticulumService app-status notification hook".
+    }
+
     override val identities = KtRnsIdentityFactory
     override val destinations = KtRnsDestinationFactory
     override val links = KtRnsLinkFactory

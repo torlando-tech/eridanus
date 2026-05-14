@@ -39,7 +39,6 @@ import tech.torlando.eridanus.rrc.RrcClient
 import tech.torlando.eridanus.rrc.RrcConstants
 import tech.torlando.eridanus.rrc.RrcEvent
 import tech.torlando.eridanus.rrc.RrcHub
-import tech.torlando.eridanus.service.EridanusConnectionService
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import java.io.ByteArrayInputStream
 
@@ -238,7 +237,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
             bringUpReticulum()
-            EridanusConnectionService.start(getApplication())
             startSharedInstanceWatchdog()
         }
     }
@@ -481,7 +479,9 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     else -> "Listening (standalone)"
                 }
             }.collect { text ->
-                EridanusConnectionService.updateStatus(text)
+                // The RNS-hosting foreground service owns the app's single
+                // persistent notification — push the status line into it.
+                backend.setForegroundStatus(text)
             }
         }
     }
@@ -569,7 +569,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                EridanusConnectionService.start(getApplication())
                 val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
@@ -623,9 +622,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
             _hubGreetingMessage.value = null
-            if (!_hubRunning.value) {
-                EridanusConnectionService.stop(getApplication())
-            }
         }
     }
 
@@ -803,7 +799,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                EridanusConnectionService.start(getApplication())
                 val client = RrcClient(clientId, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
@@ -882,7 +877,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 hub.start()
                 _hubRunning.value = true
                 _hubDestHash.value = hub.destHash
-                EridanusConnectionService.start(getApplication())
 
                 val interval = announceInterval.value
                 if (interval > 0) {
@@ -902,9 +896,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             _hubRunning.value = false
             _hubClients.value = 0
             _hubDestHash.value = null
-            if (_clientState.value == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED) {
-                EridanusConnectionService.stop(getApplication())
-            }
         }
     }
 
@@ -1076,9 +1067,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 _roomMemberCounts.value = emptyMap()
                 _roomMemberList.value = emptyMap()
                 _hubGreetingMessage.value = null
-                if (!_hubRunning.value) {
-                    EridanusConnectionService.stop(getApplication())
-                }
             }
 
             is RrcEvent.ConnectionFailed -> {

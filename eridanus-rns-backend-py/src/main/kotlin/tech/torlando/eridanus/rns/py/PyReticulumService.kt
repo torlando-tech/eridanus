@@ -5,6 +5,7 @@ package tech.torlando.eridanus.rns.py
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -22,7 +23,12 @@ import java.util.concurrent.Executors
  * Mirrors `network.reticulum.android.ReticulumService` (rns-android) at the
  * surface eridanus actually uses — start/stop/getInstance + a getReticulum()
  * accessor (here returning the python `Reticulum` object as a [PyObject]) +
- * `isRunning` / `connectedToSharedInstance` / `reconnectInterfaces()`.
+ * `isRunning` / `connectedToSharedInstance`.
+ *
+ * This is also eridanus's *single* persistent notification on the python
+ * flavor — the app no longer runs a separate notification-only service.
+ * [updateStatus] sets the user-facing status line; EridanusViewModel
+ * drives it through PyRnsBackend.setForegroundStatus.
  *
  * Notably narrower than the kotlin backend's service: no battery observer,
  * no pause/resume, no Room-backed identity/path stores. Reticulum's own
@@ -36,6 +42,11 @@ class PyReticulumService : Service() {
 
     @Volatile
     private var startInProgress: Boolean = false
+
+    /** User-facing status line shown in the foreground notification.
+     * Updated via [updateStatus] from EridanusViewModel's status flow. */
+    @Volatile
+    private var statusText: String = "Starting…"
 
     /** True between successful `RNS.Reticulum(...)` instantiation and stop. */
     val isRunning: Boolean
@@ -160,27 +171,54 @@ class PyReticulumService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Update the status line shown in the foreground notification and
+     * re-post it. Called from PyRnsBackend.setForegroundStatus, which
+     * EridanusViewModel drives off its connection-status flow. Safe to
+     * call from any thread (NotificationManager.notify is thread-safe;
+     * [statusText] is @Volatile).
+     */
+    fun updateStatus(text: String) {
+        statusText = text
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIFICATION_ID, buildNotification())
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Reticulum (python)",
+            "Eridanus",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Eridanus python flavor — embedded Reticulum runtime"
+            description = "Keeps Eridanus connected to the Reticulum network"
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(): Notification =
-        Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Reticulum")
-            .setContentText("python flavor — embedded RNS")
+    private fun buildNotification(): Notification {
+        // Content intent: open the app. Resolved via the launcher intent
+        // rather than a direct MainActivity reference — MainActivity lives
+        // in :app and isn't visible from this backend module.
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                this, 0, it,
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("Eridanus")
+            .setContentText(statusText)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
+            .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
+    }
 
     companion object {
         private const val TAG = "PyReticulumService"

@@ -31,6 +31,27 @@ interface RnsBackend {
      */
     suspend fun restart(context: Context, config: RnsBackendConfig)
 
+    /**
+     * Set the user-facing status line shown in the backend's
+     * foreground-service notification — e.g. "Connected to hub",
+     * "Hosting hub · 3 connected", "Listening (standalone)".
+     *
+     * The RNS-hosting foreground service is the app's single persistent
+     * notification (eridanus no longer runs a separate notification-only
+     * service). The python backend reflects this text directly in
+     * PyReticulumService's notification. The kotlin backend currently
+     * no-ops: rns-android's ReticulumService builds its own notification
+     * from a ConnectionSnapshot and exposes no app-status injection hook
+     * yet — tracked as a reticulum-kt follow-up (see the Obsidian note
+     * "reticulum-kt — ReticulumService app-status notification hook").
+     * Until that lands, the kotlin flavor shows rns-android's own
+     * network-status notification.
+     *
+     * Safe to call from any thread; cheap enough to call on every status
+     * change.
+     */
+    fun setForegroundStatus(text: String)
+
     val identities: RnsIdentityFactory
     val destinations: RnsDestinationFactory
     val links: RnsLinkFactory
