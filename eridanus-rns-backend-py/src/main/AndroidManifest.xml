@@ -2,12 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application>
+        <!-- Reticulum foreground service (python flavor). specialUse, not
+             dataSync: on Android 14+ dataSync carries a 6h/24h cumulative
+             runtime cap and is being discouraged by Google — wrong for a
+             persistent mesh-networking daemon. specialUse has no such cap
+             and is the bucket rns-android's ReticulumService (the kotlin
+             flavor's equivalent) already uses, so this keeps the two
+             flavors aligned. -->
         <service
             android:name="tech.torlando.eridanus.rns.py.PyReticulumService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs the upstream Reticulum network stack for mesh networking communication" />
+        </service>
     </application>
 </manifest>
