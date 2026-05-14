@@ -10,6 +10,16 @@
 # belongs in Kotlin; trips a planned Detekt rule
 # `NoRnsFacadeInPythonBackend` if it grows.
 
+# Neutralize signal.signal BEFORE importing RNS so the SIGINT / SIGTERM
+# handlers Reticulum.__init__ unconditionally installs (at Reticulum.py:362)
+# don't trip "signal only works in main thread of the main interpreter"
+# when we boot Reticulum from a worker thread (PyReticulumService.bootInWorkerThread).
+# Both signals are command-line-shutdown concerns that don't apply on
+# Android — the Service handles lifecycle. atexit.register still works
+# unaffected; that's where Reticulum's actual shutdown hook lives.
+import signal
+signal.signal = lambda *args, **kwargs: None
+
 import RNS
 
 
