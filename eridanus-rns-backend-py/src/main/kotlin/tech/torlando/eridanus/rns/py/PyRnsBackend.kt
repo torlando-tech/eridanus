@@ -28,12 +28,10 @@ class PyRnsBackend(context: Context) : RnsBackend {
     override val identifier: String = "python"
 
     override fun start(context: Context, config: RnsBackendConfig) {
-        // Bring up Reticulum on the host service. RnsBackendConfig.shareInstance
-        // is intentionally not honored on the python backend yet — eridanus
-        // is shared-instance-client-only and event_bridge.reticulum_config_dir
-        // hardcodes that. (Wiring shareInstance through later is a few-line
-        // change in the config writer.) Treat shareInstance=true as a misuse
-        // for now.
+        // shareInstance=true would mean "deliberately become the shared-
+        // instance server"; eridanus doesn't expose that, the service itself
+        // toggles share_instance in the config based on the runtime TCP
+        // probe (see PyReticulumService.bootInWorkerThread).
         require(!config.shareInstance) {
             "PyRnsBackend currently supports shared-instance-client mode only " +
                 "(matches the kotlin flavor's default in this app)."

@@ -17,7 +17,7 @@ class PyRnsLink(val delegate: PyObject) : RnsLink {
         // `Packet(link, data).send()`. Wrap that here so the seam keeps
         // the friendlier signature.
         val rns = rnsModule
-        val packet = rns.callAttr("Packet", delegate, payload)
+        val packet = rns.callAttr("Packet", delegate, payload.toPyBytes())
         packet.callAttr("send")
     }
 

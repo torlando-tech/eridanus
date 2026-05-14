@@ -12,16 +12,17 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
         // Reticulum doesn't expose Transport.find_destination(hash). The
         // bridge runs a linear scan over Transport.destinations (always
         // O(1) in practice).
-        val py = bridge.callAttr("find_local_destination", hash) ?: return null
+        val py = bridge.callAttr("find_local_destination", hash.toPyBytes()) ?: return null
         return PyRnsDestination(py)
     }
 
     override fun requestPath(hash: ByteArray) {
-        rns.get("Transport")!!.callAttr("request_path", hash)
+        rns.get("Transport")!!.callAttr("request_path", hash.toPyBytes())
     }
 
     override fun hasPath(hash: ByteArray): Boolean =
-        rns.get("Transport")!!.callAttr("has_path", hash).toJava(Boolean::class.javaObjectType)
+        rns.get("Transport")!!.callAttr("has_path", hash.toPyBytes())
+            .toJava(Boolean::class.javaObjectType)
 
     override fun registerDestination(destination: RnsDestination) {
         rns.get("Transport")!!.callAttr("register_destination", destination.asPy())

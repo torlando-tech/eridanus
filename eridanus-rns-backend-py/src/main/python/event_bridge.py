@@ -84,18 +84,16 @@ def reticulum_config_dir(app_files_dir, attach_to_shared_instance):
     the EridanusViewModel watchdog) is expected to TCP-probe 37428 first
     and pass the result here.
 
-    The file is rewritten on every call so config improvements (e.g.
-    shared_instance_type = tcp, added 2026-05-13) propagate to installs
-    with an older config on disk, and so that the share_instance bit
-    can flip as the topology changes. Eridanus has no user-editable
-    Reticulum config surface today.
+    No rpc_key written. Eridanus's only RPC-flavored call is the
+    `_used_destination_data` LRU touch fired by `Identity.recall`, which
+    we sidestep by passing `_no_use=True` in PyRnsIdentityFactory.recall.
+    All actual data plane (link establishment, packet send, announce
+    dispatch, resource transfer) goes over the LocalClientInterface
+    socket and never traverses the RPC channel.
 
-    rpc_key: not currently written. columba v0.10.x required a user-
-    supplied RPC key from Sideband for full inter-app shared-instance
-    functionality. Eridanus's basic RRC (announce + link) traffic may
-    work without it; full feature parity probably needs an rpc_key
-    field on the settings card. Tracked in
-    Memory/eridanus/rns-backend-dual-build.md.
+    The file is rewritten on every call so a config change can take
+    effect on the next backend restart cycle — eridanus has no
+    user-editable Reticulum config surface today.
     """
     import os
     configdir = os.path.join(app_files_dir, "reticulum")

@@ -451,6 +451,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+
     private fun registerAnnounceHandler() {
         try {
             val handler = RnsAnnounceHandler { destHash, _, appData ->

@@ -17,7 +17,7 @@ class PyRnsDestination(val delegate: PyObject) : RnsDestination {
         get() = delegate.get("hexhash")!!.toString()
 
     override fun announce(appData: ByteArray?) {
-        delegate.callAttr("announce", appData)
+        delegate.callAttr("announce", appData?.toPyBytes())
     }
 
     override fun setLinkEstablishedCallback(callback: (RnsLink) -> Unit) {

@@ -35,11 +35,11 @@ class PyRnsResourceFactory(private val rns: PyObject) : RnsResourceFactory {
         // versions.
         val resource = rns.callAttr(
             "Resource",
-            data,
+            data.toPyBytes(),
             link.asPy(),
             Kwarg("advertise", advertise),
             Kwarg("auto_compress", autoCompress),
-            Kwarg("request_id", requestId),
+            Kwarg("request_id", requestId?.toPyBytes()),
         )
         return PyRnsResource(resource)
     }
