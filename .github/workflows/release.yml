@@ -129,9 +129,8 @@ jobs:
 
       - name: Verify critical classes survive R8 (kotlin flavor)
         # verify_r8_keeps.py's keep-list is reticulum-kt / BouncyCastle /
-        # msgpack specific — kotlin flavor only. The python flavor's
-        # minification surface is different (chaquopy runtime + PyRns*
-        # wrappers, no reticulum-kt) and needs its own keep-list; follow-up.
+        # msgpack specific — kotlin flavor only. The python flavor has its
+        # own bridge check below.
         run: |
           APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
@@ -139,6 +138,20 @@ jobs:
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
+
+      - name: Verify python-kotlin bridge survives R8 (python flavor)
+        # Same gate as ci.yml — guards against R8 renaming the Py*Callback
+        # classes/`call` method that event_bridge.py calls reflectively.
+        # Without this, a release could ship with announces silently failing
+        # on every received-announce callback (debug builds are unaffected
+        # since they aren't minified, which masks the regression).
+        run: |
+          MAPPING=app/build/outputs/mapping/pythonRelease/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "::error::python-flavor R8 mapping not found at $MAPPING"
+            exit 1
+          fi
+          python scripts/verify_python_bridge.py "$MAPPING"
 
       - name: Extract signing certificate fingerprints
         id: cert
