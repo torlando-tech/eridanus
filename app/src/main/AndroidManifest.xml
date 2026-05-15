@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the Battery & Background settings card request a Doze
+         exemption (Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).
+         The kotlin flavor also inherits this from rns-android's manifest;
+         declaring it here covers the python flavor too. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- The RNS-hosting foreground service (per flavor: rns-android's
          ReticulumService for kotlin, PyReticulumService for python)
          declares its own foregroundServiceType + matching

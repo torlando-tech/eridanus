@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.data.DarkModeOption
+import tech.torlando.eridanus.ui.components.BatteryOptimizationCard
 import tech.torlando.eridanus.ui.components.SharedInstanceBannerCard
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
@@ -56,6 +57,7 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     val isRestarting by viewModel.isRestarting.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
     var localNickname by remember { mutableStateOf(nickname) }
+    var batteryCardExpanded by remember { mutableStateOf(false) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
         DarkModeOption.LIGHT -> false
@@ -140,6 +142,15 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                     }
                 }
             }
+
+            // Battery & background reliability (ported from columba's
+            // BatteryOptimizationCard). A non-exempt app gets Doze-throttled
+            // while backgrounded, which lets the shared-instance connection
+            // go stale and silently stops announce/packet delivery.
+            BatteryOptimizationCard(
+                isExpanded = batteryCardExpanded,
+                onExpandedChange = { batteryCardExpanded = it },
+            )
 
             // Dark mode
             Card(modifier = Modifier.fillMaxWidth()) {
