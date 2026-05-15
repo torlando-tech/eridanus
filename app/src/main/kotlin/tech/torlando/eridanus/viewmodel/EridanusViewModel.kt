@@ -13,7 +13,9 @@ import co.nstant.`in`.cbor.model.UnsignedInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -38,6 +40,7 @@ import tech.torlando.eridanus.data.db.HubEntity
 import tech.torlando.eridanus.rrc.RrcClient
 import tech.torlando.eridanus.rrc.RrcConstants
 import tech.torlando.eridanus.rrc.RrcEvent
+import tech.torlando.eridanus.util.Base32
 import tech.torlando.eridanus.rrc.RrcHub
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import java.io.ByteArrayInputStream
@@ -209,6 +212,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private var hubIdentity: RnsIdentity? = null
     private var clientIdentity: RnsIdentity? = null
 
+    /** Hex hash of the active client identity, surfaced to the IdentityCard
+     *  so the user can verify their address. Updated whenever clientIdentity
+     *  is loaded or replaced (import). null while uninitialized. */
+    private val _clientIdentityHashHex = MutableStateFlow<String?>(null)
+    val clientIdentityHashHex: StateFlow<String?> = _clientIdentityHashHex
+
+    /** One-shot results from [importClientIdentity] consumed by the
+     *  IdentityCard. SharedFlow (not StateFlow) so the same outcome doesn't
+     *  re-fire on recomposition. */
+    private val _identityImportResult = MutableSharedFlow<IdentityImportResult>(extraBufferCapacity = 1)
+    val identityImportResult: SharedFlow<IdentityImportResult> = _identityImportResult
+
     // Reticulum lifecycle coordination.
     // - restartMutex serializes teardown+bring-up so the auto-recovery
     //   watchdog and the user-driven retry button never race each other
@@ -349,7 +364,84 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             clientIdentity = identityStore.loadClientIdentity()
                 ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
         }
+        _clientIdentityHashHex.value = clientIdentity?.hash?.toHex()
     }
+
+    // ── Identity import/export ─────────────────────────────────────────
+    // File and text formats are byte-identical to Sideband's: the Base32-
+    // encoded text and the raw file are both the 64-byte RNS Identity
+    // private key (X25519 prv [32] + Ed25519 sig_prv [32]) — same shape
+    // produced by `RNS.Identity.get_private_key()` / consumed by
+    // `RNS.Identity.from_bytes`, which both flavors' RnsIdentityFactory
+    // already mirrors. See Sideband's sbapp/ui/keys.py.
+
+    /** Base32-encoded private key for share-sheet / clipboard handoff to
+     *  Sideband or another LXMF-style client. Null if no identity yet. */
+    fun exportClientIdentityBase32(): String? =
+        clientIdentity?.getPrivateKey()?.let { Base32.encode(it) }
+
+    /** Raw 64-byte private key for file export (`Identity.to_file` shape). */
+    fun exportClientIdentityBytes(): ByteArray? = clientIdentity?.getPrivateKey()
+
+    /** Decode a Base32 blob (e.g. pasted from Sideband) and import. Emits a
+     *  result on [identityImportResult]. */
+    fun importClientIdentityFromBase32(text: String) {
+        val bytes = try {
+            Base32.decode(text.trim())
+        } catch (e: Throwable) {
+            viewModelScope.launch {
+                _identityImportResult.emit(
+                    IdentityImportResult.Failure("Invalid Base32 key: ${e.message ?: "decode failed"}"),
+                )
+            }
+            return
+        }
+        importClientIdentity(bytes)
+    }
+
+    /** Validate, swap, and persist a 64-byte RNS identity private key as the
+     *  new client identity. In-process: drops any active hub link so the
+     *  next connect builds an RrcClient with the new identity — no app
+     *  restart needed. Emits success/failure on [identityImportResult]. */
+    fun importClientIdentity(privateKeyBytes: ByteArray) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                require(privateKeyBytes.size == 64) {
+                    "Identity key must be exactly 64 bytes (got ${privateKeyBytes.size})"
+                }
+                val newIdentity = backend.identities.fromBytes(privateKeyBytes)
+                    ?: error("Reticulum rejected the key data")
+
+                // RrcClient was constructed bound to the old identity. Tear
+                // it down so any subsequent connectToHub() builds a fresh
+                // client with the new identity.
+                clientEventJob?.cancel()
+                rrcClient?.disconnect()
+                rrcClient = null
+                _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                _connectedHubName.value = null
+                _joinedRooms.value = emptySet()
+                _currentRoom.value = null
+                _messages.value = emptyMap()
+                _unreadCounts.value = emptyMap()
+                _availableRooms.value = emptyList()
+
+                clientIdentity = newIdentity
+                identityStore.saveClientIdentity(newIdentity)
+                _clientIdentityHashHex.value = newIdentity.hash.toHex()
+
+                Log.i(TAG, "Client identity imported (hash=${newIdentity.hash.toHex().take(16)}…)")
+                _identityImportResult.emit(IdentityImportResult.Success)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Identity import failed: ${e.message}")
+                _identityImportResult.emit(
+                    IdentityImportResult.Failure(e.message ?: "Import failed"),
+                )
+            }
+        }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     /**
      * Tear the backend's host service down and bring it back up.
@@ -1170,4 +1262,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         // keeps the RNS instance alive across ViewModel recreation, and
         // the next ViewModel's bringUpReticulum() resyncs to it.
     }
+}
+
+/** Outcome of [EridanusViewModel.importClientIdentity], consumed by the
+ *  Identity card to show a toast/dialog. */
+sealed class IdentityImportResult {
+    object Success : IdentityImportResult()
+    data class Failure(val message: String) : IdentityImportResult()
 }

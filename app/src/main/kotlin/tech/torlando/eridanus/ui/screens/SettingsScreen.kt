@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.data.DarkModeOption
 import tech.torlando.eridanus.ui.components.BatteryOptimizationCard
+import tech.torlando.eridanus.ui.components.IdentityCard
 import tech.torlando.eridanus.ui.components.SharedInstanceBannerCard
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
@@ -58,6 +59,7 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     val clientState by viewModel.clientState.collectAsState()
     var localNickname by remember { mutableStateOf(nickname) }
     var batteryCardExpanded by remember { mutableStateOf(false) }
+    var identityCardExpanded by remember { mutableStateOf(false) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
         DarkModeOption.LIGHT -> false
@@ -244,6 +246,15 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                     }
                 }
             }
+
+            // Identity import/export (Sideband-compatible Base32 + raw 64-byte
+            // file). Placed at the bottom because importing is destructive
+            // and shouldn't sit in the user's primary attention path.
+            IdentityCard(
+                isExpanded = identityCardExpanded,
+                onExpandedChange = { identityCardExpanded = it },
+                viewModel = viewModel,
+            )
 
             Spacer(modifier = Modifier.height(32.dp))
         }
