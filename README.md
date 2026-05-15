@@ -6,7 +6,7 @@
 
 IRC-style chatrooms over [Reticulum](https://github.com/markqvist/Reticulum), built on [RRC](https://rrc.kc1awv.net/)
 
-Eridanus is an Android app that lets you create and join chatrooms on the Reticulum network. Think of it like IRC, but running on a decentralized mesh — no internet, no servers, no accounts required. Rooms are hosted on shared hubs, and anyone on the network can connect.
+Eridanus is an Android app that lets you create and join chatrooms on the Reticulum network. Think of it like IRC, but running on a decentralized mesh - no internet, no servers, no accounts required. Rooms are hosted on shared hubs, and anyone on the network can connect.
 
 ## What You Can Do
 
