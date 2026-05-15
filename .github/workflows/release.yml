@@ -221,20 +221,20 @@ jobs:
 
             ### Which APK?
 
-            Eridanus ships two flavors. Both behave identically and both
-            attach to a shared Reticulum instance on your device (Sideband,
-            rnsd in Termux, Reticulum-for-Android, Carina, …). The only
-            difference is *which Reticulum implementation runs in-process*:
+            Eridanus ships two flavors, one running the official Reticulum reference implementation, 
+            and another running an unfinished, experimental, mostly AI-generated port of Reticulum to kotlin. 
+            Both aspire to behave identically and both
+            attach to a shared Reticulum instance on your device ([Sideband](https://github.com/markqvist/Sideband),
+            rnsd in Termux, [Reticulum-for-Android](https://github.com/torlando-tech/reticulum-android)). The only
+            _intended_ difference is *which Reticulum implementation runs in-process*:
 
             | APK | Reticulum implementation | Size |
             |-----|--------------------------|------|
-            | **eridanus-kotlin-${{ steps.version.outputs.version }}.apk** | reticulum-kt (kotlin port) | smaller |
             | **eridanus-python-${{ steps.version.outputs.version }}.apk** | upstream python Reticulum, embedded via chaquopy — the reference implementation | larger (bundles a Python runtime) |
+            | **eridanus-kotlin-${{ steps.version.outputs.version }}.apk** | reticulum-kt (experimental kotlin port, WIP, AI-Generated) | smaller |
 
-            If you're unsure, the kotlin APK is the smaller download. If you
-            specifically want the reference Reticulum implementation running
-            in-process, choose the python APK.
-
+            The Python version is highly recommended, unless you are willing to experiment and are open to the risks of missing or broken behavior at the cryptography layers,
+            and really need the smaller APK.
             ### Installation
             Download one APK and install on your Android device (Android 8.0+).
 
