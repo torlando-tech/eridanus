@@ -73,7 +73,7 @@ private fun resolveMode(
  * Settings-screen banner card surfacing the shared-Reticulum-instance state.
  *
  * Eridanus has no own-RNS fallback — all RNS traffic flows through a
- * shared-instance host (Sideband, Carina, rnsd in Termux, reticulum-android,
+ * shared-instance host (Sideband, rnsd in Termux, reticulum-android,
  * …). The host is detected generically via a loopback probe on
  * 127.0.0.1:37428 and the card can't distinguish which app is providing the
  * instance, so copy stays host-agnostic.
@@ -237,7 +237,7 @@ private fun ConnectedBody(backendIdentifier: String, contentColor: Color) {
     )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BulletLine(
-            "Common hosts: Sideband, rnsd in Termux, Reticulum-for-Android, Carina.",
+            "Common hosts: Sideband, rnsd in Termux, Reticulum-for-Android.",
             contentColor,
         )
         BulletLine(
@@ -297,7 +297,6 @@ private fun WaitingBody(contentColor: Color, onRetry: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BulletLine("Sideband (most common)", contentColor)
         BulletLine("Reticulum-for-Android (python RNS via chaquopy)", contentColor)
-        BulletLine("Carina (kotlin reticulum-kt)", contentColor)
         BulletLine("rnsd inside Termux", contentColor)
     }
     Row(
