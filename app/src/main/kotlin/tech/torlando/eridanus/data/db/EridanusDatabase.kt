@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.data.db
 
 import android.content.Context

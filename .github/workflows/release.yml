@@ -16,16 +16,35 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Reticulum submodule (eridanus-rns-backend-py/Reticulum) — needed
+          # for the python flavor's chaquopy build.
           submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Cache Gradle wrapper distribution
+        # setup-gradle@v5 caches deps but not ~/.gradle/wrapper/dists. On a
+        # cache miss the wrapper bootstrap downloads from services.gradle.org
+        # with a short network timeout, which crashes the run when the CDN
+        # has a hiccup. See ci.yml for the long-form rationale.
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-wrapper-${{ runner.os }}-
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        # Pinned to v5, not v6: gradle/actions@v6 extracts caching into a
+        # separate proprietary `gradle-actions-caching` component governed
+        # by Gradle's commercial Terms of Use (loaded whenever caching is
+        # enabled, which it is here). v5 stays fully MIT and already runs
+        # on Node 24, which is all we need for the deprecation.
+        uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: false
 
@@ -39,25 +58,84 @@ jobs:
           echo "Building version: $VERSION from tag: $TAG_NAME"
 
       - name: Set up Python
+        # Build-machine python for chaquopy's gradle tasks. The python
+        # bundled into the python-flavor APK is downloaded separately by
+        # chaquopy (3.12) and is independent of this.
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Build Release APK
+      - name: Build both flavor release APKs
         env:
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          # assembleRelease fans out to assembleKotlinRelease +
+          # assemblePythonRelease via the rnsImpl flavor dimension. Both
+          # inherit the `release` build type's signing config, so both are
+          # signed with the same keystore — provided the KEYSTORE_* secrets
+          # above are present. The next step hard-verifies that.
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
-          echo "Release APK built successfully"
+          echo "Both flavor release APKs built successfully"
 
-      - name: Verify critical classes survive R8 minification
+      - name: Verify both flavor APKs are release-signed
+        # Hard gate: a tagged release must be signed with the real release
+        # keystore — never unsigned, never debug-signed. The release build
+        # type falls back to debug signing when the KEYSTORE_* secrets are
+        # absent (so PR-CI artifacts stay installable), which means a
+        # missing/unreadable secret here would silently produce a
+        # *debug-signed* "release" that still passes `apksigner verify`.
+        # So this gate checks the signer certificate, not just signature
+        # validity: the Android debug cert's well-known DN
+        # (CN=Android Debug, O=Android, C=US) is rejected outright.
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          echo "Using $APKSIGNER"
+          FAIL=0
+          for flavor in kotlin python; do
+            APK=$(find "app/build/outputs/apk/$flavor/release" -name "*.apk" | head -1)
+            if [ -z "$APK" ]; then
+              echo "::error::No $flavor-flavor release APK found"
+              FAIL=1
+              continue
+            fi
+            case "$APK" in
+              *-unsigned.apk)
+                echo "::error::$flavor APK is unsigned ($APK) — release signing secrets not applied"
+                FAIL=1
+                continue
+                ;;
+            esac
+            CERTS=$("$APKSIGNER" verify --print-certs --verbose "$APK" 2>&1) || {
+              echo "::error::$flavor APK failed signature verification ($APK)"
+              echo "$CERTS"
+              FAIL=1
+              continue
+            }
+            if echo "$CERTS" | grep -q "CN=Android Debug"; then
+              echo "::error::$flavor APK is DEBUG-signed ($APK) — release keystore secrets not applied"
+              FAIL=1
+              continue
+            fi
+            echo "OK: $flavor APK is release-signed ($APK)"
+          done
+          [ "$FAIL" -eq 0 ] || exit 1
+
+      - name: Verify critical classes survive R8 (kotlin flavor)
+        # verify_r8_keeps.py's keep-list is reticulum-kt / BouncyCastle /
+        # msgpack specific — kotlin flavor only. The python flavor's
+        # minification surface is different (chaquopy runtime + PyRns*
+        # wrappers, no reticulum-kt) and needs its own keep-list; follow-up.
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No release APK found!"
+            echo "ERROR: No kotlin-flavor release APK found!"
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
@@ -68,6 +146,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
+          # Both flavors are signed with the same keystore, so one
+          # fingerprint extraction covers both APKs.
           CERT_INFO=$(keytool -list -v -keystore app/build/keystore/release.keystore \
             -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD")
           SHA256=$(echo "$CERT_INFO" | grep "SHA256:" | awk '{print $2}')
@@ -80,14 +160,21 @@ jobs:
           echo "sha1=$SHA1" >> $GITHUB_OUTPUT
           echo "Extracted certificate fingerprints"
 
-      - name: Rename APK with version
+      - name: Collect + rename flavor APKs
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          APK_DIR="app/build/outputs/apk/release"
-          cp "$APK_DIR/"*.apk "eridanus-${VERSION}.apk"
+          # Two equal-billing release artifacts, one per rnsImpl flavor.
+          KOTLIN_APK=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
+          PYTHON_APK=$(find app/build/outputs/apk/python/release -name "*.apk" | head -1)
+          if [ -z "$KOTLIN_APK" ] || [ -z "$PYTHON_APK" ]; then
+            echo "::error::Missing a flavor APK (kotlin='$KOTLIN_APK' python='$PYTHON_APK')"
+            exit 1
+          fi
+          cp "$KOTLIN_APK" "eridanus-kotlin-${VERSION}.apk"
+          cp "$PYTHON_APK" "eridanus-python-${VERSION}.apk"
           ls -la eridanus-*.apk
-          echo "Renamed APK"
+          echo "Renamed both flavor APKs"
 
       - name: Generate SHA256 checksums
         run: |
@@ -119,20 +206,34 @@ jobs:
           body: |
             ## Eridanus ${{ steps.version.outputs.version }}
 
-            ### Installation
-            Download the APK and install on your Android device (Android 8.0+).
+            ### Which APK?
 
-            > **eridanus-${{ steps.version.outputs.version }}.apk** — single universal APK, works on all devices.
+            Eridanus ships two flavors. Both behave identically and both
+            attach to a shared Reticulum instance on your device (Sideband,
+            rnsd in Termux, Reticulum-for-Android, Carina, …). The only
+            difference is *which Reticulum implementation runs in-process*:
+
+            | APK | Reticulum implementation | Size |
+            |-----|--------------------------|------|
+            | **eridanus-kotlin-${{ steps.version.outputs.version }}.apk** | reticulum-kt (kotlin port) | smaller |
+            | **eridanus-python-${{ steps.version.outputs.version }}.apk** | upstream python Reticulum, embedded via chaquopy — the reference implementation | larger (bundles a Python runtime) |
+
+            If you're unsure, the kotlin APK is the smaller download. If you
+            specifically want the reference Reticulum implementation running
+            in-process, choose the python APK.
+
+            ### Installation
+            Download one APK and install on your Android device (Android 8.0+).
 
             ### Verification
 
-            **Signing Certificate Fingerprints:**
+            **Signing Certificate Fingerprints** (both APKs, same keystore):
             ```
             SHA-256: ${{ steps.cert.outputs.sha256 }}
             SHA-1:   ${{ steps.cert.outputs.sha1 }}
             ```
 
-            **SHA256 Checksum:**
+            **SHA256 Checksums:**
             ```
             ${{ steps.sha256.outputs.checksums }}
             ```
@@ -142,9 +243,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload APK as workflow artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload APKs as workflow artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: eridanus-${{ steps.version.outputs.version }}-apk
+          name: eridanus-${{ steps.version.outputs.version }}-apks
           path: eridanus-*.apk
           retention-days: 30

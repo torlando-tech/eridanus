@@ -5,6 +5,9 @@
 .DS_Store
 /build
 /app/build
+/eridanus-rns-api/build
+/eridanus-rns-backend-kt/build
+/eridanus-rns-backend-py/build
 /captures
 .externalNativeBuild
 .cxx

@@ -115,7 +115,8 @@ android {
                 }
             }
         } else {
-            println("Release signing not configured (missing environment variables)")
+            println("Release keystore env vars not set — release builds will " +
+                "fall back to debug signing (installable, but NOT a real release)")
         }
     }
 
@@ -126,9 +127,44 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (releaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
+            // When the real keystore is configured (tagged releases via
+            // release.yml), sign with it. Otherwise fall back to the debug
+            // keystore rather than producing an *unsigned* APK — an unsigned
+            // release APK can't be installed on any device, which makes the
+            // PR-CI `release-apks` artifact useless for testing. Debug-signed
+            // release APKs are still R8-minified, just not distributable.
+            // release.yml's apksigner gate rejects debug-signed APKs, so a
+            // missing-secret situation can never ship a real release.
+            signingConfig = if (releaseSigningConfigured) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
+        }
+    }
+
+    // rnsImpl flavor dimension — see Memory/eridanus/rns-backend-dual-build.md.
+    // `kotlin` ships reticulum-kt embedded; `python` embeds chaquopy +
+    // upstream RNS. Both attach to a shared instance the same way at
+    // runtime; the difference is which code runs the crypto / link state
+    // machine / packet framing in-process.
+    //
+    // Each flavor gets a distinct applicationId (via applicationIdSuffix)
+    // so the two can be installed side by side — useful for direct
+    // comparison and for two-device parity testing on a single phone.
+    // `namespace` stays "tech.torlando.eridanus" (the code package is
+    // shared); only the installed app id diverges. Per-flavor app_name
+    // strings (app/src/<flavor>/res/values/strings.xml) keep them
+    // distinguishable in the launcher.
+    flavorDimensions += "rnsImpl"
+    productFlavors {
+        create("kotlin") {
+            dimension = "rnsImpl"
+            applicationIdSuffix = ".kotlin"
+        }
+        create("python") {
+            dimension = "rnsImpl"
+            applicationIdSuffix = ".python"
         }
     }
 
@@ -155,8 +191,15 @@ android {
 }
 
 dependencies {
-    // Reticulum (published to JitPack from torlando-tech/reticulum-kt)
-    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.19")
+    // Backend-neutral RNS contract — app code consumes this; the chosen
+    // flavor provides the backend that implements it.
+    implementation(project(":eridanus-rns-api"))
+
+    // Flavor-bound backends. The Detekt rule NoDirectReticulumKtImportFromApp
+    // (to be added in a follow-up) keeps app code from depending on either
+    // backend's internals — only the API.
+    "kotlinImplementation"(project(":eridanus-rns-backend-kt"))
+    "pythonImplementation"(project(":eridanus-rns-backend-py"))
 
     // CBOR encoding (RRC protocol uses CBOR)
     implementation("co.nstant.in:cbor:0.9")

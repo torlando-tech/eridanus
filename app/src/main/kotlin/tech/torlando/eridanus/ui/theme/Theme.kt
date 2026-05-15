@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.ui.theme
 
 import android.app.Activity

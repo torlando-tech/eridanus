@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.rrc
 
-import network.reticulum.link.Link
+import tech.torlando.eridanus.rns.RnsLink
 
 class ByteArrayKey(val bytes: ByteArray) {
     override fun equals(other: Any?) = other is ByteArrayKey && bytes.contentEquals(other.bytes)
@@ -29,7 +31,7 @@ data class HubRoomState(
 class HubRoomManager {
 
     private val roomState = mutableMapOf<String, HubRoomState>()
-    private val roomMembers = mutableMapOf<String, MutableSet<Link>>()
+    private val roomMembers = mutableMapOf<String, MutableSet<RnsLink>>()
     private val serverOps = mutableSetOf<ByteArrayKey>()
     private val globalBans = mutableSetOf<ByteArrayKey>()
 
@@ -70,13 +72,13 @@ class HubRoomManager {
 
     fun getState(room: String): HubRoomState? = roomState[room]
 
-    fun getMembers(room: String): Set<Link> = roomMembers[room] ?: emptySet()
+    fun getMembers(room: String): Set<RnsLink> = roomMembers[room] ?: emptySet()
 
-    fun addMember(room: String, link: Link) {
+    fun addMember(room: String, link: RnsLink) {
         roomMembers.getOrPut(room) { mutableSetOf() }.add(link)
     }
 
-    fun removeMember(room: String, link: Link) {
+    fun removeMember(room: String, link: RnsLink) {
         roomMembers[room]?.remove(link)
         if (roomMembers[room]?.isEmpty() == true) {
             roomMembers.remove(room)
@@ -87,7 +89,7 @@ class HubRoomManager {
         }
     }
 
-    fun removeFromAllRooms(link: Link): List<String> {
+    fun removeFromAllRooms(link: RnsLink): List<String> {
         val rooms = roomMembers.filter { link in it.value }.keys.toList()
         for (room in rooms) {
             removeMember(room, link)

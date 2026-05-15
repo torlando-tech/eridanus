@@ -8,49 +8,117 @@ on:
 
 jobs:
   r8-verification:
-    name: Verify R8 Keep Rules
+    name: Build both flavors + verify R8 keeps
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Reticulum is vendored as a submodule under
+          # eridanus-rns-backend-py/Reticulum — chaquopy needs it on the
+          # python path for the python flavor build.
           submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Cache Gradle wrapper distribution
+        # setup-gradle@v5 caches ~/.gradle/caches (deps) but NOT
+        # ~/.gradle/wrapper/dists. On a cache miss for the wrapper, the
+        # wrapper bootstrap downloads gradle-X.Y.Z-bin.zip from
+        # services.gradle.org with a hardcoded 10s read timeout and no
+        # retry. When services.gradle.org has a hiccup that crashes the
+        # whole CI run before any Gradle task can start. Caching the
+        # extracted distribution lets a cache hit bypass that download
+        # entirely. Keyed on gradle-wrapper.properties (distributionUrl
+        # + distributionSha256Sum) so version bumps cleanly miss the cache.
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-wrapper-${{ runner.os }}-
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        # Pinned to v5, not v6: gradle/actions@v6 extracts caching into a
+        # separate proprietary `gradle-actions-caching` component governed
+        # by Gradle's commercial Terms of Use (loaded whenever caching is
+        # enabled, which it is here). v5 stays fully MIT and already runs
+        # on Node 24, which is all we need for the deprecation.
+        uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: true
 
       - name: Set up Python
+        # Build-machine python for chaquopy's gradle tasks (NOT the python
+        # bundled into the APK — chaquopy downloads its own 3.12 runtime
+        # for that). Any chaquopy-supported version works on the host.
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Build Release APK
+      - name: Build both flavor release APKs
+        # assembleRelease fans out to assembleKotlinRelease +
+        # assemblePythonRelease via the rnsImpl flavor dimension.
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace --max-workers=2
 
-      - name: Verify critical classes survive R8 minification
+      - name: Verify critical classes survive R8 (kotlin flavor)
+        # verify_r8_keeps.py's class list is reticulum-kt / BouncyCastle /
+        # msgpack specific — those only exist in the kotlin flavor. The
+        # python flavor has its own bridge check below.
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK_PATH=$(find app/build/outputs/apk/kotlin/release -name "*.apk" | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No release APK found!"
+            echo "ERROR: No kotlin-flavor release APK found!"
             exit 1
           fi
           python scripts/verify_r8_keeps.py "$APK_PATH"
 
-      - name: Upload R8 mapping file
+      - name: Verify python-kotlin bridge survives R8 (python flavor)
+        # event_bridge.py calls back into the Py*Callback classes by
+        # reflective name (chaquopy `kt_cb.call(...)`). If R8 renames a
+        # callback class or its `call` method, every announce / link /
+        # packet / resource callback throws AttributeError at runtime —
+        # and only on minified (release) builds, so it ships unnoticed.
+        run: |
+          MAPPING=app/build/outputs/mapping/pythonRelease/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "ERROR: python-flavor R8 mapping not found at $MAPPING!"
+            exit 1
+          fi
+          python scripts/verify_python_bridge.py "$MAPPING"
+
+      - name: Confirm python flavor APK was produced
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/python/release -name "*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No python-flavor release APK found!"
+            exit 1
+          fi
+          echo "python flavor APK: $APK_PATH ($(du -h "$APK_PATH" | cut -f1))"
+
+      - name: Upload flavor APKs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: r8-mapping
-          path: app/build/outputs/mapping/release/mapping.txt
+          name: release-apks
+          path: |
+            app/build/outputs/apk/kotlin/release/*.apk
+            app/build/outputs/apk/python/release/*.apk
+          retention-days: 14
+
+      - name: Upload R8 mapping files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: r8-mappings
+          path: |
+            app/build/outputs/mapping/kotlinRelease/mapping.txt
+            app/build/outputs/mapping/pythonRelease/mapping.txt
           retention-days: 30

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-flavor launcher label. Overrides the app_name in
+  app/src/main/res/values/strings.xml so the kotlin and python flavors
+  are tell-apart-able when installed side by side (their applicationIds
+  already diverge via applicationIdSuffix; this is the cosmetic half).
+-->
+<resources>
+    <string name="app_name">Eridanus (kt)</string>
+</resources>

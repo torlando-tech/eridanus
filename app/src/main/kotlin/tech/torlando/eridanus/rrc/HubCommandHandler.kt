@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.rrc
 
-import network.reticulum.link.Link
+import tech.torlando.eridanus.rns.RnsLink
 
 class HubCommandHandler(
     private val hub: RrcHub,
@@ -662,7 +664,7 @@ class HubCommandHandler(
      * Resolve a target by nick or hash prefix.
      * Returns (link, "") on success or (null, errorMessage) on failure.
      */
-    private fun resolveTarget(token: String, room: String?): Pair<Link?, String> {
+    private fun resolveTarget(token: String, room: String?): Pair<RnsLink?, String> {
         val t = token.trim().lowercase()
         if (t.isEmpty()) return null to "target '' not found"
 
@@ -671,7 +673,7 @@ class HubCommandHandler(
 
         if (isHex) {
             // Hash prefix search
-            val matches = mutableListOf<Link>()
+            val matches = mutableListOf<RnsLink>()
             for ((link, s) in hub.allSessions()) {
                 val ph = s.peerHash ?: continue
                 val hex = ph.joinToString("") { "%02x".format(it) }
@@ -688,7 +690,7 @@ class HubCommandHandler(
         }
 
         // Nick search (case-insensitive)
-        val matches = mutableListOf<Link>()
+        val matches = mutableListOf<RnsLink>()
         for ((link, s) in hub.allSessions()) {
             if (s.nick?.lowercase() == t) {
                 if (room != null && room !in s.rooms) continue

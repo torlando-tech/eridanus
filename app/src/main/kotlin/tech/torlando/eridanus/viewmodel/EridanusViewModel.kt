@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.viewmodel
 
 import android.app.Application
@@ -9,20 +11,26 @@ import co.nstant.`in`.cbor.model.Map as CborMap
 import co.nstant.`in`.cbor.model.UnicodeString
 import co.nstant.`in`.cbor.model.UnsignedInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import network.reticulum.Reticulum
-import network.reticulum.android.ReticulumConfig
-import network.reticulum.android.ReticulumService
-import network.reticulum.identity.Identity
-import network.reticulum.transport.AnnounceHandler
-import network.reticulum.transport.Transport
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import tech.torlando.eridanus.EridanusApp
+import tech.torlando.eridanus.rns.RnsAnnounceHandler
+import tech.torlando.eridanus.rns.RnsAnnounceHandlerRegistration
+import tech.torlando.eridanus.rns.RnsBackend
+import tech.torlando.eridanus.rns.RnsBackendConfig
+import tech.torlando.eridanus.rns.RnsIdentity
 import tech.torlando.eridanus.data.DarkModeOption
 import tech.torlando.eridanus.data.DefaultRoomConfig
 import tech.torlando.eridanus.data.IdentityStore
@@ -32,8 +40,8 @@ import tech.torlando.eridanus.data.db.HubEntity
 import tech.torlando.eridanus.rrc.RrcClient
 import tech.torlando.eridanus.rrc.RrcConstants
 import tech.torlando.eridanus.rrc.RrcEvent
+import tech.torlando.eridanus.util.Base32
 import tech.torlando.eridanus.rrc.RrcHub
-import tech.torlando.eridanus.service.EridanusConnectionService
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import java.io.ByteArrayInputStream
 
@@ -63,10 +71,31 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val TAG = "EridanusViewModel"
+
+        // Cadence for the shared-instance watchdog (see
+        // [startSharedInstanceWatchdog]). 10s mirrors the value the original
+        // auto-recover commit (fix/auto-recover-shared-instance-attach,
+        // 44e6c61) settled on after manual testing on Samsung S21 — tight
+        // enough that swapping hosts feels responsive, loose enough that one
+        // loopback TCP connect every 10s costs nothing meaningful for
+        // battery.
+        private const val WATCHDOG_INTERVAL_MS = 10_000L
+
+        // Brief grace period after restart() returns before re-reading
+        // backend flags. The backend impl already waits internally for its
+        // service to come up, but the ViewModel-side re-read still gets
+        // racy intermediate state if it happens the same instant the
+        // service flips its flag.
+        private const val POST_RESTART_SETTLE_MS = 300L
     }
 
+    private val backend: RnsBackend = (application as EridanusApp).rnsBackend
+    /** "kotlin" or "python" — surfaces in the SharedInstanceBannerCard so
+     * trust-skeptical users on the python flavor can confirm the reference
+     * stack is what's running. */
+    val backendIdentifier: String = backend.identifier
     private val prefs = PreferencesManager(application)
-    private val identityStore = IdentityStore(application)
+    private val identityStore = IdentityStore(application, backend.identities)
     private val hubDao = EridanusDatabase.getInstance(application).hubDao()
 
     val theme: StateFlow<PresetTheme> = prefs.theme.stateIn(
@@ -91,6 +120,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private val _connectedToSharedInstance = MutableStateFlow(false)
     val connectedToSharedInstance: StateFlow<Boolean> = _connectedToSharedInstance
+
+    /** Sticky: was true, lost the host, hasn't reconnected yet. Drives the
+     * "lost host — reconnecting" banner state borrowed from v0.10.x columba.
+     * Cleared on successful re-attach. */
+    private val _wasConnectedToSharedInstance = MutableStateFlow(false)
+    val wasConnectedToSharedInstance: StateFlow<Boolean> = _wasConnectedToSharedInstance
+
+    /** True while [restartBackend] is mid-cycle. UI uses this to show a
+     * progress affordance instead of the retry button so the user doesn't
+     * hit retry repeatedly during an in-flight restart. */
+    private val _isRestarting = MutableStateFlow(false)
+    val isRestarting: StateFlow<Boolean> = _isRestarting
 
     // Client state
     private var clientEventJob: kotlinx.coroutines.Job? = null
@@ -168,8 +209,40 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     )
 
     // Identities
-    private var hubIdentity: Identity? = null
-    private var clientIdentity: Identity? = null
+    private var hubIdentity: RnsIdentity? = null
+    private var clientIdentity: RnsIdentity? = null
+
+    /** Hex hash of the active client identity, surfaced to the IdentityCard
+     *  so the user can verify their address. Updated whenever clientIdentity
+     *  is loaded or replaced (import). null while uninitialized. */
+    private val _clientIdentityHashHex = MutableStateFlow<String?>(null)
+    val clientIdentityHashHex: StateFlow<String?> = _clientIdentityHashHex
+
+    /** One-shot results from [importClientIdentity] consumed by the
+     *  IdentityCard. SharedFlow (not StateFlow) so the same outcome doesn't
+     *  re-fire on recomposition. */
+    private val _identityImportResult = MutableSharedFlow<IdentityImportResult>(extraBufferCapacity = 1)
+    val identityImportResult: SharedFlow<IdentityImportResult> = _identityImportResult
+
+    // Reticulum lifecycle coordination.
+    // - restartMutex serializes teardown+bring-up so the auto-recovery
+    //   watchdog and the user-driven retry button never race each other
+    //   to recreate the backend service.
+    // - watchdogJob is the periodic probe that detects when the
+    //   shared-instance host on 127.0.0.1:37428 appears (we started
+    //   without one) or disappears (host died after we attached), and
+    //   re-runs the attach probe so the user never has to think about
+    //   launch order.
+    private val restartMutex = Mutex()
+    private var watchdogJob: Job? = null
+
+    // This ViewModel's announce-handler registration with the backend.
+    // [registerAnnounceHandler] deregisters the previous one before
+    // registering a new one, and [onCleared] deregisters on teardown —
+    // without that, every restartBackend() cycle and every ViewModel
+    // recreation would leave a stale handler in RNS's handler list,
+    // pinning a leaked ViewModel.
+    private var announceHandlerRegistration: RnsAnnounceHandlerRegistration? = null
 
     init {
         initReticulum()
@@ -178,65 +251,287 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private fun initReticulum() {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // Bring up Reticulum via the rns-android foreground service.
-                // The service resolves configDir against the app's filesDir,
-                // wires Room-backed IdentityStore / PathStore / AnnounceStore
-                // (so known_destinations / ratchets / announce-cache stay in
-                // SQLite instead of /.reticulum/* on root fs — which the old
-                // direct `Reticulum.start()` path silently fell back to on
-                // Android because `user.home` is empty), and auto-detects
-                // an existing shared instance on the configured port.
-                //
-                // shareInstance = false: Eridanus is a chat client with no UI
-                // for configuring Reticulum interfaces. If we became the
-                // shared-instance server, our Reticulum would have no path
-                // to the outside world, and any sibling process that attached
-                // to us (Sideband, Carina, the rns CLI) would also be cut off
-                // — they'd see their own outbound interfaces disabled in
-                // client mode and rely on ours, which is empty. The role
-                // inversion is silent and easy to fall into whenever Eridanus
-                // happens to start before whatever app is supposed to host
-                // the network stack on the device.
-                //
-                // So we explicitly opt out of ever hosting. ReticulumService
-                // will only attach as a client when a shared instance is
-                // already running on 37428 (typically Sideband, Caelum, or
-                // a python "Reticulum for Android" daemon); otherwise it
-                // runs Reticulum standalone with no interfaces — which is
-                // also non-functional, but at least non-functional in a way
-                // the user can fix by starting their shared-instance host
-                // app, rather than poisoning every other app on the device.
-                ReticulumService.start(
-                    getApplication(),
-                    ReticulumConfig(shareInstance = false),
-                )
+            bringUpReticulum()
+            startSharedInstanceWatchdog()
+        }
+    }
 
-                // Service init kicks off Reticulum.start(...) + interface
-                // bring-up on a background thread; give it a beat before
-                // we read identityStore. ReticulumService.getInstance()
-                // returns null until onCreate runs, then non-null forever
-                // (single-instance service). 2s mirrors carina's window.
-                kotlinx.coroutines.delay(2000)
-
-                hubIdentity = identityStore.loadHubIdentity()
-                    ?: Identity.create().also { identityStore.saveHubIdentity(it) }
-                clientIdentity = identityStore.loadClientIdentity()
-                    ?: Identity.create().also { identityStore.saveClientIdentity(it) }
-
-                val service = ReticulumService.getInstance()
-                _reticulumStarted.value = service?.isRunning() == true
-                _connectedToSharedInstance.value =
-                    service?.getReticulum()?.connectToSharedInstance == true
+    /**
+     * Drive one backend bring-up cycle and reflect the result into
+     * [_reticulumStarted] / [_connectedToSharedInstance].
+     *
+     * Idempotent w.r.t. backend.start: if a service is already running
+     * with the same config the start call is effectively a no-op (foreground
+     * service intent re-delivers but the backend short-circuits via its
+     * own CAS guard). Use [restartBackend] when you need a fresh
+     * shared-instance probe — that's the path that tears down the service
+     * first so the probe actually re-runs.
+     */
+    private suspend fun bringUpReticulum() {
+        try {
+            if (backend.isRunning) {
+                // The backend's foreground service + RNS instance are
+                // already up — this is a ViewModel recreation (Android
+                // destroyed and recreated the Activity while the app was
+                // backgrounded), NOT a cold start. Calling backend.start()
+                // again would re-fire the foreground service's
+                // onStartCommand and, on the python flavor, re-initialize
+                // the live RNS instance — dropping the shared-instance
+                // attachment and churning announce handlers on every
+                // foreground. Instead just resync UI state from the
+                // still-running backend and re-register this ViewModel's
+                // announce handler. No backend.start(), no 2s cold-start
+                // delay (so the "Starting Reticulum" flash goes away).
+                loadIdentitiesIfNeeded()
+                _reticulumStarted.value = true
+                val connected = backend.connectedToSharedInstance
+                _connectedToSharedInstance.value = connected
+                if (connected) {
+                    _wasConnectedToSharedInstance.value = false
+                    registerAnnounceHandler()
+                }
                 Log.i(
                     TAG,
-                    "Reticulum started (shared instance: ${_connectedToSharedInstance.value})"
+                    "Reticulum already running (backend=${backend.identifier}, " +
+                        "shared instance: $connected) — resynced without restart"
                 )
+                return
+            }
 
-                EridanusConnectionService.start(getApplication())
+            // Cold start. Bring up Reticulum via the chosen backend (see
+            // :eridanus-rns-api and the per-flavor source-set wiring in
+            // EridanusApp). The kotlin flavor delegates to rns-android's
+            // foreground service, which wires Room-backed IdentityStore /
+            // PathStore / AnnounceStore so known destinations / ratchets /
+            // announce-cache stay in SQLite instead of /.reticulum/* on root
+            // fs (which the old direct Reticulum.start() path silently fell
+            // back to on Android because `user.home` is empty). The python
+            // flavor does the equivalent via upstream python Reticulum
+            // running as a shared-instance client through chaquopy.
+            //
+            // shareInstance = false: Eridanus is a chat client with no UI for
+            // configuring Reticulum interfaces. If we became the
+            // shared-instance server, our Reticulum would have no path to the
+            // outside world, and any sibling process that attached to us
+            // (Sideband, Carina, the rns CLI) would also be cut off — they'd
+            // see their own outbound interfaces disabled in client mode and
+            // rely on ours, which is empty. So we explicitly opt out of ever
+            // hosting; [startSharedInstanceWatchdog] re-drives the probe if a
+            // host comes up after Eridanus does.
+            backend.start(
+                getApplication(),
+                RnsBackendConfig(shareInstance = false),
+            )
+
+            // Service init kicks off Reticulum.start(...) + interface
+            // bring-up on a background thread; give it a beat before we read
+            // identityStore. 2s mirrors the kotlin backend's initial bring-up
+            // window.
+            delay(2000)
+
+            loadIdentitiesIfNeeded()
+
+            _reticulumStarted.value = backend.isRunning
+            val connected = backend.connectedToSharedInstance
+            _connectedToSharedInstance.value = connected
+            if (connected) {
+                // Successful (re)attach clears the lost-host banner.
+                _wasConnectedToSharedInstance.value = false
                 registerAnnounceHandler()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Reticulum", e)
+            }
+            Log.i(
+                TAG,
+                "Reticulum started (backend=${backend.identifier}, shared instance: $connected)"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start Reticulum", e)
+        }
+    }
+
+    /**
+     * Identities are persistent across restarts; only generate on the
+     * first ever start. Subsequent restartBackend() cycles and ViewModel
+     * recreations reuse the same identities so the peer-identity surface a
+     * hub sees doesn't churn whenever the user backgrounds the app or
+     * toggles a shared-instance host.
+     */
+    private fun loadIdentitiesIfNeeded() {
+        if (hubIdentity == null) {
+            hubIdentity = identityStore.loadHubIdentity()
+                ?: backend.identities.create().also { identityStore.saveHubIdentity(it) }
+        }
+        if (clientIdentity == null) {
+            clientIdentity = identityStore.loadClientIdentity()
+                ?: backend.identities.create().also { identityStore.saveClientIdentity(it) }
+        }
+        _clientIdentityHashHex.value = clientIdentity?.hash?.toHex()
+    }
+
+    // ── Identity import/export ─────────────────────────────────────────
+    // File and text formats are byte-identical to Sideband's: the Base32-
+    // encoded text and the raw file are both the 64-byte RNS Identity
+    // private key (X25519 prv [32] + Ed25519 sig_prv [32]) — same shape
+    // produced by `RNS.Identity.get_private_key()` / consumed by
+    // `RNS.Identity.from_bytes`, which both flavors' RnsIdentityFactory
+    // already mirrors. See Sideband's sbapp/ui/keys.py.
+
+    /** Base32-encoded private key for share-sheet / clipboard handoff to
+     *  Sideband or another LXMF-style client. Null if no identity yet. */
+    fun exportClientIdentityBase32(): String? =
+        clientIdentity?.getPrivateKey()?.let { Base32.encode(it) }
+
+    /** Raw 64-byte private key for file export (`Identity.to_file` shape). */
+    fun exportClientIdentityBytes(): ByteArray? = clientIdentity?.getPrivateKey()
+
+    /** Decode a Base32 blob (e.g. pasted from Sideband) and import. Emits a
+     *  result on [identityImportResult]. */
+    fun importClientIdentityFromBase32(text: String) {
+        val bytes = try {
+            Base32.decode(text.trim())
+        } catch (e: Throwable) {
+            viewModelScope.launch {
+                _identityImportResult.emit(
+                    IdentityImportResult.Failure("Invalid Base32 key: ${e.message ?: "decode failed"}"),
+                )
+            }
+            return
+        }
+        importClientIdentity(bytes)
+    }
+
+    /** Validate, swap, and persist a 64-byte RNS identity private key as the
+     *  new client identity. In-process: drops any active hub link so the
+     *  next connect builds an RrcClient with the new identity — no app
+     *  restart needed. Emits success/failure on [identityImportResult]. */
+    fun importClientIdentity(privateKeyBytes: ByteArray) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                require(privateKeyBytes.size == 64) {
+                    "Identity key must be exactly 64 bytes (got ${privateKeyBytes.size})"
+                }
+                val newIdentity = backend.identities.fromBytes(privateKeyBytes)
+                    ?: error("Reticulum rejected the key data")
+
+                // RrcClient was constructed bound to the old identity. Tear
+                // it down so any subsequent connectToHub() builds a fresh
+                // client with the new identity.
+                clientEventJob?.cancel()
+                rrcClient?.disconnect()
+                rrcClient = null
+                _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                _connectedHubName.value = null
+                _joinedRooms.value = emptySet()
+                _currentRoom.value = null
+                _messages.value = emptyMap()
+                _unreadCounts.value = emptyMap()
+                _availableRooms.value = emptyList()
+
+                clientIdentity = newIdentity
+                identityStore.saveClientIdentity(newIdentity)
+                _clientIdentityHashHex.value = newIdentity.hash.toHex()
+
+                Log.i(TAG, "Client identity imported (hash=${newIdentity.hash.toHex().take(16)}…)")
+                _identityImportResult.emit(IdentityImportResult.Success)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Identity import failed: ${e.message}")
+                _identityImportResult.emit(
+                    IdentityImportResult.Failure(e.message ?: "Import failed"),
+                )
+            }
+        }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+    /**
+     * Tear the backend's host service down and bring it back up.
+     * Serialized through [restartMutex] so concurrent watchdog ticks +
+     * user-tap retry never collide.
+     *
+     * The whole cycle (stop → wait for teardown → restart probe → start →
+     * wait for service to be ready) is handled inside [backend.restart].
+     * Here we just bracket it with the UI flag flips and re-read the
+     * resulting state.
+     */
+    private suspend fun restartBackend() {
+        if (!restartMutex.tryLock()) {
+            // Another restart cycle is already in flight (watchdog and a
+            // user tap landed within the same second). Drop this one —
+            // the in-flight cycle is going to refresh the state we care
+            // about anyway.
+            Log.d(TAG, "restartBackend: already in flight, skipping")
+            return
+        }
+        try {
+            _isRestarting.value = true
+            _reticulumStarted.value = false
+            _connectedToSharedInstance.value = false
+
+            backend.restart(getApplication(), RnsBackendConfig(shareInstance = false))
+            delay(POST_RESTART_SETTLE_MS)
+
+            _reticulumStarted.value = backend.isRunning
+            val connected = backend.connectedToSharedInstance
+            _connectedToSharedInstance.value = connected
+            if (connected) {
+                _wasConnectedToSharedInstance.value = false
+                registerAnnounceHandler()
+            }
+            Log.i(TAG, "Reticulum restart complete (shared instance: $connected)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restart Reticulum", e)
+        } finally {
+            _isRestarting.value = false
+            restartMutex.unlock()
+        }
+    }
+
+    /**
+     * Periodic watchdog that compares actual shared-instance topology
+     * (is something bound to 127.0.0.1:37428 right now?) to our current
+     * attached state, and triggers [restartBackend] whenever they
+     * disagree. Lets the user start, stop, or swap shared-instance host
+     * apps after Eridanus is already running without relaunching.
+     *
+     * Cases this handles:
+     *
+     * - Eridanus started before the host: probe goes false→true as soon
+     *   as the user launches Sideband / Carina / rnsd, watchdog re-runs
+     *   the attach probe. ~10s recovery in practice.
+     * - Host killed while Eridanus is attached: probe goes true→false,
+     *   watchdog flips us back to standalone and sets
+     *   [_wasConnectedToSharedInstance] so the lost-host banner shows.
+     * - Host swapped (Sideband off, different app takes the port):
+     *   probe oscillates false→true, watchdog re-attaches to whoever is
+     *   bound now. Same stored identity, so peers keep recognising us.
+     */
+    private fun startSharedInstanceWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                try {
+                    val probe = backend.isSharedInstanceRunning()
+                    val attached = _connectedToSharedInstance.value
+                    if (probe != attached) {
+                        if (attached && !probe) {
+                            // We were attached; host went away. Set the
+                            // sticky flag before the restart wipes our
+                            // current attach state so the banner can show
+                            // the lost-host card during the recovery
+                            // attempt.
+                            _wasConnectedToSharedInstance.value = true
+                        }
+                        Log.i(
+                            TAG,
+                            "Watchdog: shared-instance topology changed " +
+                                "(probe=$probe, attached=$attached) — restarting backend",
+                        )
+                        restartBackend()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Watchdog probe failed: ${e.message}")
+                }
             }
         }
     }
@@ -276,44 +571,41 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     else -> "Listening (standalone)"
                 }
             }.collect { text ->
-                EridanusConnectionService.updateStatus(text)
+                // The RNS-hosting foreground service owns the app's single
+                // persistent notification — push the status line into it.
+                backend.setForegroundStatus(text)
             }
         }
     }
 
+    /**
+     * User-driven retry from the "No shared instance — tap to retry"
+     * banner. Delegates to [restartBackend], which is what the background
+     * watchdog also uses, so the two paths share a single serialized
+     * teardown+bring-up cycle.
+     */
     fun retrySharedInstance() {
         viewModelScope.launch(Dispatchers.IO) {
-            // rns-android's ReticulumService picks the shared-instance role
-            // (client-of-existing vs server) at startup based on whether a
-            // listener is already bound on the configured port. To "retry"
-            // we ask it to re-probe by reconnecting its interfaces; if a
-            // shared instance has since appeared on the port (e.g. rnsd
-            // came up after the app started, or adb reverse was set up
-            // late) the rebuilt LocalClientInterface will attach this time.
-            val service = ReticulumService.getInstance()
-            if (service == null) {
-                Log.w(TAG, "Retry shared instance: service not yet running")
-                _connectedToSharedInstance.value = false
-                return@launch
-            }
-            service.reconnectInterfaces()
-            kotlinx.coroutines.delay(500)
-            val connected = service.getReticulum()?.connectToSharedInstance == true
-            _connectedToSharedInstance.value = connected
-            if (connected) {
-                registerAnnounceHandler()
-            }
-            Log.i(TAG, "Retry shared instance: connected=$connected")
+            restartBackend()
         }
     }
 
+
     private fun registerAnnounceHandler() {
+        // Drop the previous registration first. This is called on every
+        // bringUpReticulum() (cold start + ViewModel-recreation resync) and
+        // every restartBackend() cycle — without deregistering, each call
+        // appends another handler to RNS's announce_handlers list, and each
+        // stale handler captures `this` and keeps firing redundant
+        // hubDao upserts.
+        announceHandlerRegistration?.deregister()
+        announceHandlerRegistration = null
         try {
-            val handler = AnnounceHandler { destHash, _, appData ->
+            val handler = RnsAnnounceHandler { destHash, _, appData ->
                 handleHubAnnounce(destHash, appData)
                 true
             }
-            Transport.registerAnnounceHandler(handler)
+            announceHandlerRegistration = backend.transport.registerAnnounceHandler(handler)
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)
@@ -369,8 +661,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                EridanusConnectionService.start(getApplication())
-                val client = RrcClient(id, nickname = nickname.value.ifEmpty { null })
+                val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
@@ -423,9 +714,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
             _hubGreetingMessage.value = null
-            if (!_hubRunning.value) {
-                EridanusConnectionService.stop(getApplication())
-            }
         }
     }
 
@@ -603,8 +891,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                EridanusConnectionService.start(getApplication())
-                val client = RrcClient(clientId, nickname = nickname.value.ifEmpty { null })
+                val client = RrcClient(clientId, backend, nickname = nickname.value.ifEmpty { null })
                 rrcClient = client
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
 
@@ -665,7 +952,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val id = hubIdentity ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val hub = RrcHub(id, prefs.getHubName())
+                val hub = RrcHub(id, backend, prefs.getHubName())
                 hub.greeting = prefs.getHubGreeting().ifEmpty { null }
                 hub.defaultRooms = prefs.getHubDefaultRooms()
                     .filter { it.name.isNotBlank() }
@@ -682,7 +969,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 hub.start()
                 _hubRunning.value = true
                 _hubDestHash.value = hub.destHash
-                EridanusConnectionService.start(getApplication())
 
                 val interval = announceInterval.value
                 if (interval > 0) {
@@ -702,9 +988,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             _hubRunning.value = false
             _hubClients.value = 0
             _hubDestHash.value = null
-            if (_clientState.value == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED) {
-                EridanusConnectionService.stop(getApplication())
-            }
         }
     }
 
@@ -876,9 +1159,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 _roomMemberCounts.value = emptyMap()
                 _roomMemberList.value = emptyMap()
                 _hubGreetingMessage.value = null
-                if (!_hubRunning.value) {
-                    EridanusConnectionService.stop(getApplication())
-                }
             }
 
             is RrcEvent.ConnectionFailed -> {
@@ -969,7 +1249,24 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         super.onCleared()
-        // Don't disconnect/stop here — the foreground service keeps the process alive.
-        // If the service is not running (user manually disconnected), these are already null.
+        // Deregister our announce handler — it captures `this`, and the
+        // backend's RNS instance outlives the ViewModel (foreground
+        // service keeps it up). Without this, a ViewModel destroyed on
+        // Activity teardown stays pinned in RNS's handler list.
+        // watchdogJob and clientEventJob don't need explicit cancellation
+        // — they're launched in viewModelScope, which is cancelled
+        // automatically after onCleared().
+        announceHandlerRegistration?.deregister()
+        announceHandlerRegistration = null
+        // Don't disconnect/stop the backend here — the foreground service
+        // keeps the RNS instance alive across ViewModel recreation, and
+        // the next ViewModel's bringUpReticulum() resyncs to it.
     }
+}
+
+/** Outcome of [EridanusViewModel.importClientIdentity], consumed by the
+ *  Identity card to show a toast/dialog. */
+sealed class IdentityImportResult {
+    object Success : IdentityImportResult()
+    data class Failure(val message: String) : IdentityImportResult()
 }

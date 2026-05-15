@@ -1,15 +1,17 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.rrc
 
 import android.util.Log
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
-import network.reticulum.common.DestinationDirection
-import network.reticulum.common.DestinationType
-import network.reticulum.destination.Destination
-import network.reticulum.identity.Identity
-import network.reticulum.link.Link
-import network.reticulum.resource.Resource
-import network.reticulum.transport.Transport
+import tech.torlando.eridanus.rns.RnsBackend
+import tech.torlando.eridanus.rns.RnsDestinationDirection
+import tech.torlando.eridanus.rns.RnsDestinationType
+import tech.torlando.eridanus.rns.RnsIdentity
+import tech.torlando.eridanus.rns.RnsLink
+import tech.torlando.eridanus.rns.RnsResource
+import tech.torlando.eridanus.rns.RnsResourceStrategy
 import java.security.MessageDigest
 import tech.torlando.eridanus.rrc.RrcConstants.B_HELLO_CAPS
 import tech.torlando.eridanus.rrc.RrcConstants.B_HELLO_NAME
@@ -74,7 +76,8 @@ private data class PendingResource(
 )
 
 class RrcClient(
-    private val identity: Identity,
+    private val identity: RnsIdentity,
+    private val backend: RnsBackend,
     var nickname: String? = null,
 ) {
     companion object {
@@ -83,7 +86,7 @@ class RrcClient(
         private const val APP_VERSION = "1.0"
     }
 
-    private var link: Link? = null
+    private var link: RnsLink? = null
     private val _joinedRooms = mutableSetOf<String>()
     private val _pendingResources = mutableMapOf<String, PendingResource>()
     val joinedRooms: Set<String> get() = _joinedRooms.toSet()
@@ -103,7 +106,7 @@ class RrcClient(
     private val _events = MutableSharedFlow<RrcEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<RrcEvent> = _events
 
-    fun connect(hubDestHash: ByteArray, knownIdentity: Identity? = null) {
+    fun connect(hubDestHash: ByteArray, knownIdentity: RnsIdentity? = null) {
         val hexHash = hubDestHash.joinToString("") { "%02x".format(it) }
         Log.i(TAG, "connect: starting connection to $hexHash (knownIdentity=${knownIdentity != null})")
         if (state != ClientState.DISCONNECTED) {
@@ -112,18 +115,18 @@ class RrcClient(
         state = ClientState.CONNECTING
 
         try {
-            val isLocal = Transport.findDestination(hubDestHash) != null
+            val isLocal = backend.transport.findDestination(hubDestHash) != null
             if (!isLocal) {
-                Transport.requestPath(hubDestHash)
+                backend.transport.requestPath(hubDestHash)
                 Log.d(TAG, "connect: requested path, waiting...")
 
                 // Wait for path (up to ~15 seconds)
                 var attempts = 0
-                while (!Transport.hasPath(hubDestHash) && attempts < 150) {
+                while (!backend.transport.hasPath(hubDestHash) && attempts < 150) {
                     Thread.sleep(100)
                     attempts++
                 }
-                val hasPath = Transport.hasPath(hubDestHash)
+                val hasPath = backend.transport.hasPath(hubDestHash)
                 Log.i(TAG, "connect: path lookup done after $attempts attempts, hasPath=$hasPath")
                 if (!hasPath) {
                     state = ClientState.DISCONNECTED
@@ -136,13 +139,13 @@ class RrcClient(
 
             // Identity is learned from the path response (which is an announce).
             // Give the announce processing a moment to complete if needed.
-            var hubIdentity = knownIdentity ?: Identity.recall(hubDestHash)
+            var hubIdentity = knownIdentity ?: backend.identities.recall(hubDestHash)
             if (hubIdentity == null) {
                 Log.d(TAG, "connect: identity not yet available, waiting for announce processing...")
                 var identityAttempts = 0
                 while (hubIdentity == null && identityAttempts < 20) {
                     Thread.sleep(100)
-                    hubIdentity = Identity.recall(hubDestHash)
+                    hubIdentity = backend.identities.recall(hubDestHash)
                     identityAttempts++
                 }
             }
@@ -152,7 +155,7 @@ class RrcClient(
                 return
             }
 
-            val parsed = Destination.appAndAspectsFromName(DEST_NAME)
+            val parsed = backend.destinations.appAndAspectsFromName(DEST_NAME)
             if (parsed == null) {
                 state = ClientState.DISCONNECTED
                 _events.tryEmit(RrcEvent.ConnectionFailed("Invalid destination name: $DEST_NAME"))
@@ -160,16 +163,16 @@ class RrcClient(
             }
             val (appName, aspects) = parsed
 
-            val hubDest = Destination.create(
+            val hubDest = backend.destinations.create(
                 hubIdentity,
-                DestinationDirection.OUT,
-                DestinationType.SINGLE,
+                RnsDestinationDirection.OUT,
+                RnsDestinationType.SINGLE,
                 appName,
                 *aspects.toTypedArray(),
             )
             Log.i(TAG, "connect: created OUT destination ${hubDest.hexHash}")
 
-            val newLink = Link.create(hubDest,
+            val newLink = backend.links.create(hubDest,
                 establishedCallback = { establishedLink ->
                     Log.d(TAG, "Link established")
                     try {
@@ -193,7 +196,7 @@ class RrcClient(
                     _events.tryEmit(RrcEvent.Disconnected)
                 },
             )
-            newLink.setPacketCallback { data, _ ->
+            newLink.setPacketCallback { data ->
                 onPacket(data)
             }
 
@@ -256,7 +259,7 @@ class RrcClient(
         send(RrcEnvelope.make(T_PING, src = identity.hash))
     }
 
-    private fun sendHello(targetLink: Link) {
+    private fun sendHello(targetLink: RnsLink) {
         val caps = mapOf<Int, Any?>(
             CAP_RESOURCE_ENVELOPE to true,
         )
@@ -270,8 +273,8 @@ class RrcClient(
         targetLink.send(payload)
     }
 
-    private fun setupResourceCallbacks(link: Link) {
-        link.setResourceStrategy(Link.ACCEPT_APP)
+    private fun setupResourceCallbacks(link: RnsLink) {
+        link.setResourceStrategy(RnsResourceStrategy.ACCEPT_APP)
         link.setResourceCallback { advertisement ->
             // Accept if we have a pending expectation matching the request ID
             val reqId = advertisement.requestId
@@ -283,15 +286,12 @@ class RrcClient(
                 true
             }
         }
-        link.callbacks.resourceConcluded = { resourceObj ->
-            val res = resourceObj as? Resource
-            if (res != null) {
-                onResourceConcluded(res)
-            }
+        link.setResourceConcludedCallback { resource ->
+            onResourceConcluded(resource)
         }
     }
 
-    private fun onResourceConcluded(resource: Resource) {
+    private fun onResourceConcluded(resource: RnsResource) {
         val data = resource.data ?: return
         val reqId = resource.requestId
         val hexId = reqId?.joinToString("") { "%02x".format(it) }

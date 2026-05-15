@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package tech.torlando.eridanus.ui.screens
 
 import androidx.compose.foundation.background
@@ -38,6 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.data.DarkModeOption
+import tech.torlando.eridanus.ui.components.BatteryOptimizationCard
+import tech.torlando.eridanus.ui.components.IdentityCard
+import tech.torlando.eridanus.ui.components.SharedInstanceBannerCard
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
@@ -49,8 +54,12 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     val nickname by viewModel.nickname.collectAsState()
     val reticulumStarted by viewModel.reticulumStarted.collectAsState()
     val connectedToShared by viewModel.connectedToSharedInstance.collectAsState()
+    val wasConnectedToShared by viewModel.wasConnectedToSharedInstance.collectAsState()
+    val isRestarting by viewModel.isRestarting.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
     var localNickname by remember { mutableStateOf(nickname) }
+    var batteryCardExpanded by remember { mutableStateOf(false) }
+    var identityCardExpanded by remember { mutableStateOf(false) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
         DarkModeOption.LIGHT -> false
@@ -90,56 +99,33 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                 }
             }
 
-            // Connection status
+            // Shared-instance banner (3-state, see SharedInstanceBannerCard
+            // — adapted from v0.10.x columba's pattern). Owns the "what is
+            // Reticulum doing right now" surface; the watchdog in
+            // EridanusViewModel drives the state flags.
+            SharedInstanceBannerCard(
+                connected = connectedToShared,
+                wasConnected = wasConnectedToShared,
+                isRestarting = isRestarting,
+                backendIdentifier = viewModel.backendIdentifier,
+                onRetry = { viewModel.retrySharedInstance() },
+            )
+
+            // Hub client status
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Connection",
+                        text = "Hub",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("Reticulum")
-                        Text(
-                            text = if (!reticulumStarted) "Starting..."
-                                   else if (connectedToShared) "Connected"
-                                   else "Not connected",
-                            color = if (reticulumStarted && connectedToShared) MaterialTheme.colorScheme.primary
-                                    else if (reticulumStarted) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (reticulumStarted) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = if (connectedToShared) "Connected to shared Reticulum instance on localhost:37428"
-                                       else "Could not connect to shared instance — is Carina running?",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (connectedToShared) MaterialTheme.colorScheme.onSurfaceVariant
-                                        else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (!connectedToShared) {
-                                TextButton(onClick = { viewModel.retrySharedInstance() }) {
-                                    Text("Retry")
-                                }
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("Hub")
+                        Text("Connection")
                         Text(
                             text = clientState.name.lowercase().replaceFirstChar { it.uppercase() },
                             color = if (clientState == tech.torlando.eridanus.rrc.ClientState.ACTIVE) {
@@ -149,8 +135,24 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                             },
                         )
                     }
+                    if (!reticulumStarted) {
+                        Text(
+                            text = "Waiting for Reticulum to finish starting…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
+
+            // Battery & background reliability (ported from columba's
+            // BatteryOptimizationCard). A non-exempt app gets Doze-throttled
+            // while backgrounded, which lets the shared-instance connection
+            // go stale and silently stops announce/packet delivery.
+            BatteryOptimizationCard(
+                isExpanded = batteryCardExpanded,
+                onExpandedChange = { batteryCardExpanded = it },
+            )
 
             // Dark mode
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -244,6 +246,15 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                     }
                 }
             }
+
+            // Identity import/export (Sideband-compatible Base32 + raw 64-byte
+            // file). Placed at the bottom because importing is destructive
+            // and shouldn't sit in the user's primary attention path.
+            IdentityCard(
+                isExpanded = identityCardExpanded,
+                onExpandedChange = { identityCardExpanded = it },
+                viewModel = viewModel,
+            )
 
             Spacer(modifier = Modifier.height(32.dp))
         }
