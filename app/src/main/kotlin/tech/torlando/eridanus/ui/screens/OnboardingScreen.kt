@@ -188,7 +188,7 @@ private fun ConnectPage(viewModel: EridanusViewModel) {
         )
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            text = "Eridanus needs a Reticulum shared instance to discover hubs and communicate with peers. Run Sideband, RNS, or Carina on this device to provide one.",
+            text = "Eridanus needs a Reticulum shared instance to discover hubs and communicate with peers. Run Sideband, rnsd in Termux, or Reticulum-for-Android on this device to provide one.",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -217,7 +217,7 @@ private fun ConnectPage(viewModel: EridanusViewModel) {
         if (reticulumStarted && !connectedToSharedInstance) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "No shared instance found. A shared instance (Sideband, RNS, or Carina) must be running on this device for Eridanus to work.",
+                text = "No shared instance found. A shared instance (Sideband, rnsd via Termux, or Reticulum-for-Android) must be running on this device for Eridanus to work.",
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
