@@ -26,6 +26,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Cache Gradle wrapper distribution
+        # setup-gradle@v5 caches deps but not ~/.gradle/wrapper/dists. On a
+        # cache miss the wrapper bootstrap downloads from services.gradle.org
+        # with a short network timeout, which crashes the run when the CDN
+        # has a hiccup. See ci.yml for the long-form rationale.
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-wrapper-${{ runner.os }}-
+
       - name: Setup Gradle
         # Pinned to v5, not v6: gradle/actions@v6 extracts caching into a
         # separate proprietary `gradle-actions-caching` component governed
