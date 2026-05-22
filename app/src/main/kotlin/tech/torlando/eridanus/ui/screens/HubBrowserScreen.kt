@@ -2,6 +2,9 @@
 
 package tech.torlando.eridanus.ui.screens
 
+import android.text.format.DateUtils
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,11 +16,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +42,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
@@ -190,6 +198,7 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 isStarred = true,
                                 onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
                                 onConnect = { viewModel.connectToHub(hub.hash) },
+                                onRemove = { viewModel.removeHub(hub.hexHash) },
                                 connectEnabled = !isConnected && !isConnecting,
                                 connectLabel = if (isConnecting) "Connecting..." else "Connect",
                             )
@@ -214,6 +223,7 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 isStarred = false,
                                 onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
                                 onConnect = { viewModel.connectToHub(hub.hash) },
+                                onRemove = { viewModel.removeHub(hub.hexHash) },
                                 connectEnabled = !isConnected && !isConnecting,
                                 connectLabel = if (isConnecting) "Connecting..." else "Connect",
                             )
@@ -265,52 +275,98 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HubCard(
     hub: tech.torlando.eridanus.viewmodel.DiscoveredHub,
     isStarred: Boolean,
     onToggleStar: () -> Unit,
     onConnect: () -> Unit,
+    onRemove: () -> Unit,
     connectEnabled: Boolean,
     connectLabel: String,
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-    ) {
-        Row(
+    val haptic = LocalHapticFeedback.current
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box {
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showMenu = true
+                    },
+                ),
         ) {
-            IconButton(onClick = onToggleStar) {
-                Icon(
-                    imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
-                    contentDescription = if (isStarred) "Unstar" else "Star",
-                    tint = if (isStarred) MaterialTheme.colorScheme.primary
-                           else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = hub.name,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = hub.hexHash.take(16) + "...",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Button(
-                onClick = onConnect,
-                enabled = connectEnabled,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(connectLabel)
+                IconButton(onClick = onToggleStar) {
+                    Icon(
+                        imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+                        contentDescription = if (isStarred) "Unstar" else "Star",
+                        tint = if (isStarred) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = hub.name,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = hub.hexHash.take(16) + "...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Last heard ${formatLastHeard(hub.lastSeen)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(
+                    onClick = onConnect,
+                    enabled = connectEnabled,
+                ) {
+                    Text(connectLabel)
+                }
             }
         }
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Remove") },
+                onClick = {
+                    showMenu = false
+                    onRemove()
+                },
+                leadingIcon = { Icon(Icons.Default.Delete, null) },
+            )
+        }
+    }
+}
+
+/** Human-readable "last heard" string from an announce timestamp (ms since epoch). */
+private fun formatLastHeard(lastSeen: Long): String {
+    val now = System.currentTimeMillis()
+    return if (now - lastSeen < DateUtils.MINUTE_IN_MILLIS) {
+        "just now"
+    } else {
+        DateUtils.getRelativeTimeSpanString(
+            lastSeen,
+            now,
+            DateUtils.MINUTE_IN_MILLIS,
+        ).toString()
     }
 }
 

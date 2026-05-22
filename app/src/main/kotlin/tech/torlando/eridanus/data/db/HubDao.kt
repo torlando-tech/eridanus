@@ -20,4 +20,7 @@ interface HubDao {
 
     @Query("UPDATE discovered_hubs SET starred = NOT starred WHERE hexHash = :hexHash")
     suspend fun toggleStarred(hexHash: String)
+
+    @Query("DELETE FROM discovered_hubs WHERE hexHash = :hexHash")
+    suspend fun delete(hexHash: String)
 }

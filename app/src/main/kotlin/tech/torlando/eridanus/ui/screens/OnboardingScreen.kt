@@ -20,6 +20,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.R
 import kotlinx.coroutines.launch
+import tech.torlando.eridanus.ui.components.IdentityImportControls
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
 private const val PAGE_COUNT = 4
@@ -265,6 +267,19 @@ private fun NicknamePage(viewModel: EridanusViewModel) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+
+        Spacer(modifier = Modifier.height(32.dp))
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Already use Reticulum? Import your identity from Sideband or " +
+                "Columba to keep the same address.",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        IdentityImportControls(viewModel = viewModel)
     }
 }
 
