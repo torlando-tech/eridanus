@@ -105,6 +105,10 @@ jobs:
 
       - name: Upload flavor APKs
         if: always()
+        # Convenience build outputs only — a full Actions artifact-storage
+        # quota must not fail the build/verify job (the R8 keep checks above
+        # are what actually gate CI).
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: release-apks
@@ -115,6 +119,7 @@ jobs:
 
       - name: Upload R8 mapping files
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: r8-mappings
