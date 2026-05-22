@@ -935,6 +935,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Removes a discovered hub from the list. It will reappear if the hub
+     *  announces again. */
+    fun removeHub(hexHash: String) {
+        Log.i(TAG, "removeHub: $hexHash")
+        viewModelScope.launch(Dispatchers.IO) {
+            hubDao.delete(hexHash)
+        }
+    }
+
     fun setAnnounceInterval(seconds: Int) {
         viewModelScope.launch {
             prefs.setAnnounceInterval(seconds)
