@@ -214,7 +214,7 @@ class PyReticulumService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Eridanus")
             .setContentText(statusText)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_stat_eridanus)
             .setOngoing(true)
             .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
