@@ -255,10 +255,3 @@ jobs:
             See the release notes below for details.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload APKs as workflow artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: eridanus-${{ steps.version.outputs.version }}-apks
-          path: eridanus-*.apk
-          retention-days: 30
