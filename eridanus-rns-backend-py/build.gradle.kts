@@ -39,29 +39,24 @@ android {
 chaquopy {
     defaultConfig {
         // 3.12 is the highest python with broad pip wheel availability under
-        // chaquopy 17. Reticulum 1.2.5 runs cleanly on it.
+        // chaquopy 17.
         version = "3.12"
 
-        // No pip installs. Reticulum is pure-python end to end — its
-        // `cryptography` and `pyserial` dependencies are optional. Without
-        // PyCA cryptography on the python path, RNS/Cryptography/Provider.py
-        // falls back to the bundled pure-python crypto under
-        // RNS/Cryptography/aes/ and RNS/Cryptography/pure25519/. We don't
-        // need pyserial because eridanus only operates as a shared-instance
-        // client (LocalClientInterface over loopback TCP — pure stdlib).
+        // pip-install upstream Reticulum from PyPI (pinned to 1.2.5). We
+        // also install PyCA `cryptography` — a native wheel from Chaquopy's
+        // prebuilt package repo — so RNS uses fast native crypto via
+        // RNS/Cryptography/Provider.py instead of its slow pure-python
+        // pure25519/aes fallback. (`rns` declares cryptography itself; the
+        // explicit floor just matches the wheel Chaquopy ships.)
+        //
+        // This replaced an earlier setup that vendored the whole Reticulum
+        // repo as a git submodule on the chaquopy sourceSet path. pip pulls
+        // only the RNS package (not the repo's docs/Examples/tests), so the
+        // python APK is actually smaller despite adding native crypto, and
+        // there's no submodule for CI/contributors to init.
         pip {
-            // intentionally empty — see comment above.
-        }
-    }
-
-    // Reticulum source lives at eridanus-rns-backend-py/Reticulum/ (git
-    // submodule pinned to 1.2.5). Tell chaquopy to add it to the python
-    // import path so `import RNS` works from event_bridge.py and from
-    // PyObject.getModule("RNS") in Kotlin. `src/main/python` (where
-    // event_bridge.py lives) is on the path by default.
-    sourceSets {
-        getByName("main") {
-            srcDir("Reticulum")
+            install("rns==1.2.5")
+            install("cryptography>=42.0.0")
         }
     }
 }

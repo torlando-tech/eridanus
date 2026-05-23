@@ -17,10 +17,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # Reticulum is vendored as a submodule under
-          # eridanus-rns-backend-py/Reticulum — chaquopy needs it on the
-          # python path for the python flavor build.
-          submodules: recursive
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5

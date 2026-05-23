@@ -1,3 +1,0 @@
-[submodule "eridanus-rns-backend-py/Reticulum"]
-	path = eridanus-rns-backend-py/Reticulum
-	url = https://github.com/markqvist/Reticulum.git
