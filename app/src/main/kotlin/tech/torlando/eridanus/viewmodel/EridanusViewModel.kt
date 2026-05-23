@@ -1022,6 +1022,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     val counts = _roomMemberCounts.value.toMutableMap()
                     counts[event.room] = event.members.size
                     _roomMemberCounts.value = counts
+                    // Seed the member list from the join roster so the member
+                    // sheet matches the count immediately. These are hashes
+                    // only; the auto-requested /who below enriches them with
+                    // nicks when its notice returns.
+                    val memberList = _roomMemberList.value.toMutableMap()
+                    memberList[event.room] = event.members.map {
+                        RoomMember(nick = null, hashPrefix = it.toHex().take(12))
+                    }
+                    _roomMemberList.value = memberList
                 }
                 addMessage(event.room, ChatMessage(
                     nick = null,
@@ -1102,6 +1111,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                         }
                         return
                     } else {
+                        // A roomless "/who" response still names its room in the
+                        // body ("members in X: ..."), so parse it before falling
+                        // back to treating the text as a hub greeting.
+                        if (parseMembersNotice(event.body)) return
                         // Roomless notice that isn't /list — treat as hub greeting
                         _hubGreetingMessage.value = event.body
                         return
@@ -1142,6 +1155,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 val counts = _roomMemberCounts.value.toMutableMap()
                 counts[event.room] = (counts[event.room] ?: 0) + 1
                 _roomMemberCounts.value = counts
+                // Keep the member list in step with the count (nick filled in
+                // by the next /who).
+                val prefix = event.memberHash.toHex().take(12)
+                val memberList = _roomMemberList.value.toMutableMap()
+                val existing = memberList[event.room] ?: emptyList()
+                if (existing.none { it.hashPrefix == prefix }) {
+                    memberList[event.room] = existing + RoomMember(nick = null, hashPrefix = prefix)
+                    _roomMemberList.value = memberList
+                }
             }
 
             is RrcEvent.MemberParted -> {
@@ -1156,6 +1178,12 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 val current = counts[event.room] ?: 0
                 if (current > 0) counts[event.room] = current - 1
                 _roomMemberCounts.value = counts
+                val prefix = event.memberHash.toHex().take(12)
+                val memberList = _roomMemberList.value.toMutableMap()
+                memberList[event.room]?.let { list ->
+                    memberList[event.room] = list.filterNot { it.hashPrefix == prefix }
+                    _roomMemberList.value = memberList
+                }
             }
 
             is RrcEvent.Disconnected -> {
@@ -1209,39 +1237,41 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun parseMembersNotice(body: String) {
+    /** Returns true if [body] was a "/who" member notice and was consumed. */
+    private fun parseMembersNotice(body: String): Boolean {
         // "members in {room}: nick1 (hash1), nick2 (hash2)" or "(none)"
-        val membersIn = Regex("""^members in (\S+): (.+)$""")
-        membersIn.find(body)?.let { match ->
-            val room = match.groupValues[1]
-            val memberList = match.groupValues[2]
-            if (memberList == "(none)") {
-                val counts = _roomMemberCounts.value.toMutableMap()
-                counts[room] = 0
-                _roomMemberCounts.value = counts
-                val members = _roomMemberList.value.toMutableMap()
-                members[room] = emptyList()
-                _roomMemberList.value = members
-                return
-            }
-            // Parse "nick (hash12hex), nick2 (hash12hex)" or bare "fullhex"
-            val entryPattern = Regex("""(.+?)\s+\(([0-9a-f]+)\)""")
-            val parsed = memberList.split(",").map { entry ->
-                val trimmed = entry.trim()
-                val entryMatch = entryPattern.find(trimmed)
-                if (entryMatch != null) {
-                    RoomMember(nick = entryMatch.groupValues[1], hashPrefix = entryMatch.groupValues[2])
-                } else {
-                    RoomMember(nick = null, hashPrefix = trimmed)
-                }
-            }
+        val match = Regex("""^members in (\S+): (.+)$""").find(body) ?: return false
+        // Normalize the room key the same way T_JOINED does (it lowercases),
+        // otherwise the list lands under a key the member sheet never reads.
+        val room = match.groupValues[1].trim().lowercase()
+        val memberList = match.groupValues[2]
+        if (memberList == "(none)") {
             val counts = _roomMemberCounts.value.toMutableMap()
-            counts[room] = parsed.size
+            counts[room] = 0
             _roomMemberCounts.value = counts
             val members = _roomMemberList.value.toMutableMap()
-            members[room] = parsed
+            members[room] = emptyList()
             _roomMemberList.value = members
+            return true
         }
+        // Parse "nick (hash12hex), nick2 (hash12hex)" or bare "fullhex"
+        val entryPattern = Regex("""(.+?)\s+\(([0-9a-f]+)\)""")
+        val parsed = memberList.split(",").map { entry ->
+            val trimmed = entry.trim()
+            val entryMatch = entryPattern.find(trimmed)
+            if (entryMatch != null) {
+                RoomMember(nick = entryMatch.groupValues[1], hashPrefix = entryMatch.groupValues[2])
+            } else {
+                RoomMember(nick = null, hashPrefix = trimmed)
+            }
+        }
+        val counts = _roomMemberCounts.value.toMutableMap()
+        counts[room] = parsed.size
+        _roomMemberCounts.value = counts
+        val members = _roomMemberList.value.toMutableMap()
+        members[room] = parsed
+        _roomMemberList.value = members
+        return true
     }
 
     private fun addMessage(room: String, message: ChatMessage) {
