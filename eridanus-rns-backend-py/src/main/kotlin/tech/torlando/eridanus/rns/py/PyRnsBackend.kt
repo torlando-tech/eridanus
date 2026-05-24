@@ -96,6 +96,14 @@ class PyRnsBackend(context: Context) : RnsBackend {
         PyReticulumService.getInstance()?.updateStatus(text)
     }
 
+    override fun setKeepAliveWakeLock(held: Boolean) {
+        // The service owns the wake lock (same module as the WAKE_LOCK
+        // permission, and it outlives the ViewModel). If the service isn't
+        // running there's no RNS instance to keep alive, so dropping the
+        // call is correct.
+        PyReticulumService.getInstance()?.setKeepAliveWakeLock(held)
+    }
+
     override val identities = PyRnsIdentityFactory(rns)
     override val destinations = PyRnsDestinationFactory(rns)
     override val links = PyRnsLinkFactory(rns)

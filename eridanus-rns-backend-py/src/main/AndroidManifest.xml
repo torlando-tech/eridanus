@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Partial wake lock for the opt-in "keep connection alive in
+         background" setting: keeps the CPU scheduling the RNS network
+         threads through Doze so the hub link doesn't silently drop while
+         idle. Gated behind a user toggle (PyReticulumService). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application>
         <!-- Reticulum foreground service (python flavor). specialUse, not

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,6 +59,7 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     val wasConnectedToShared by viewModel.wasConnectedToSharedInstance.collectAsState()
     val isRestarting by viewModel.isRestarting.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
+    val keepConnectionAlive by viewModel.keepConnectionAlive.collectAsState()
     var localNickname by remember { mutableStateOf(nickname) }
     var batteryCardExpanded by remember { mutableStateOf(false) }
     var identityCardExpanded by remember { mutableStateOf(false) }
@@ -153,6 +156,41 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                 isExpanded = batteryCardExpanded,
                 onExpandedChange = { batteryCardExpanded = it },
             )
+
+            // Keep connection alive in background. Holds a partial wake lock
+            // while connected to a hub so the CPU keeps running the RNS
+            // threads through Doze — otherwise an idle device suspends and
+            // the hub link silently drops. Off by default (continuous battery
+            // cost); works best with the battery exemption above granted.
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.setKeepConnectionAlive(!keepConnectionAlive) }
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Keep connection alive in background",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = "Stay in your room while the screen is off. " +
+                                "Uses more battery; grant the battery exemption above for it to work reliably.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = keepConnectionAlive,
+                        onCheckedChange = { viewModel.setKeepConnectionAlive(it) },
+                    )
+                }
+            }
 
             // Dark mode
             Card(modifier = Modifier.fillMaxWidth()) {

@@ -32,6 +32,7 @@ class PreferencesManager(private val context: Context) {
         private val KEY_HUB_DEFAULT_KEY = stringPreferencesKey("hub_default_key")
         private val KEY_HUB_DEFAULT_ROOMS = stringPreferencesKey("hub_default_rooms")
         private val KEY_HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
+        private val KEY_KEEP_ALIVE_BACKGROUND = booleanPreferencesKey("keep_alive_background")
     }
 
     val theme: Flow<PresetTheme> = context.dataStore.data.map { prefs ->
@@ -87,6 +88,17 @@ class PreferencesManager(private val context: Context) {
 
     val hasCompletedOnboarding: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_HAS_COMPLETED_ONBOARDING] ?: false
+    }
+
+    /**
+     * When true, Eridanus holds a partial wake lock while connected to a hub
+     * so the CPU keeps scheduling the RNS network threads during Doze / deep
+     * idle — preventing the silent link drop that otherwise happens once the
+     * device suspends. Off by default: it's a continuous battery cost the
+     * user opts into. See PyReticulumService.setKeepAliveWakeLock.
+     */
+    val keepConnectionAlive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_KEEP_ALIVE_BACKGROUND] ?: false
     }
 
     val hubDefaultRooms: Flow<List<DefaultRoomConfig>> = context.dataStore.data.map { prefs ->
@@ -175,6 +187,10 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setHasCompletedOnboarding(completed: Boolean) {
         context.dataStore.edit { it[KEY_HAS_COMPLETED_ONBOARDING] = completed }
+    }
+
+    suspend fun setKeepConnectionAlive(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_KEEP_ALIVE_BACKGROUND] = enabled }
     }
 
     suspend fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
