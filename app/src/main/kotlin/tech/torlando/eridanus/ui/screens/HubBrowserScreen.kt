@@ -49,12 +49,17 @@ import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HubBrowserScreen(viewModel: EridanusViewModel) {
+fun HubBrowserScreen(
+    viewModel: EridanusViewModel,
+    onNavigateToRooms: () -> Unit,
+) {
     val discoveredHubs by viewModel.discoveredHubs.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
     val connectedHub by viewModel.connectedHubName.collectAsState()
     val reticulumStarted by viewModel.reticulumStarted.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
+    val joinedRooms by viewModel.joinedRooms.collectAsState()
+    val availableRooms by viewModel.availableRooms.collectAsState()
     var showManualDialog by remember { mutableStateOf(false) }
     var manualHash by remember { mutableStateOf("") }
 
@@ -93,17 +98,27 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                 .padding(paddingValues),
         ) {
             if (isConnected) {
+                // Adaptive status line: lead with joined-room count once the
+                // user is in rooms, otherwise nudge toward the ones available
+                // to join; fall back to a bare "Connected" before the roster
+                // arrives.
+                val roomStatus = when {
+                    joinedRooms.isNotEmpty() ->
+                        "Connected · ${joinedRooms.size} ${if (joinedRooms.size == 1) "room" else "rooms"} joined"
+                    availableRooms.isNotEmpty() ->
+                        "Connected · ${availableRooms.size} ${if (availableRooms.size == 1) "room" else "rooms"} available"
+                    else -> "Connected"
+                }
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Column {
                             Text(
@@ -111,13 +126,30 @@ fun HubBrowserScreen(viewModel: EridanusViewModel) {
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                text = "Connected",
+                                text = roomStatus,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
-                        OutlinedButton(onClick = { viewModel.disconnectFromHub() }) {
-                            Text("Disconnect")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            // Per Material's action-placement convention, the
+                            // primary action (View Rooms) sits on the trailing
+                            // edge; the secondary/dismissive Disconnect leads.
+                            OutlinedButton(
+                                onClick = { viewModel.disconnectFromHub() },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Disconnect")
+                            }
+                            Button(
+                                onClick = onNavigateToRooms,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("View Rooms")
+                            }
                         }
                     }
                 }
