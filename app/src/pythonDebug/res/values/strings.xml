@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-variant launcher label for the python *debug* build. Full variant
+  source sets (<flavor><BuildType>) outrank both the flavor source set
+  (app/src/python) and the build type, so this overrides "Eridanus" with
+  a "Test" label. Pairs with the debug build type's ".debug"
+  applicationIdSuffix so the debug app installs and reads as distinct from
+  the release-signed "Eridanus" on the same device.
+-->
+<resources>
+    <string name="app_name">Eridanus Test</string>
+</resources>
