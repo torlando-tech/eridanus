@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-variant launcher label for the kotlin *debug* build — the debug
+  counterpart of app/src/kotlin's "Eridanus (kt)". See the python sibling
+  (app/src/pythonDebug) for the source-set precedence rationale.
+-->
+<resources>
+    <string name="app_name">Eridanus Test (kt)</string>
+</resources>

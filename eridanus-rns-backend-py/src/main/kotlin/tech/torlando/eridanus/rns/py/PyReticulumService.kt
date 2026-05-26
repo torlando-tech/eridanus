@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
@@ -47,6 +48,12 @@ class PyReticulumService : Service() {
      * Updated via [updateStatus] from EridanusViewModel's status flow. */
     @Volatile
     private var statusText: String = "Starting…"
+
+    /** Partial wake lock that keeps the CPU scheduling the python RNS
+     * threads through Doze. Lazily created on first acquire; guarded by
+     * [wakeLockLock]. See [setKeepAliveWakeLock]. */
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val wakeLockLock = Any()
 
     /** True between successful `RNS.Reticulum(...)` instantiation and stop. */
     val isRunning: Boolean
@@ -144,6 +151,7 @@ class PyReticulumService : Service() {
     }
 
     override fun onDestroy() {
+        setKeepAliveWakeLock(false)
         try {
             val r = reticulum
             if (r != null) {
@@ -186,6 +194,46 @@ class PyReticulumService : Service() {
         }
     }
 
+    /**
+     * Acquire or release the keep-alive partial wake lock.
+     *
+     * The foreground service keeps this *process* alive but not the *CPU* —
+     * once the device suspends in Doze, the python RNS threads stop running,
+     * the LocalClientInterface socket + RRC link keepalive go silent, and the
+     * hub tears the link down (no PONG within its 30s ping timeout), dropping
+     * the user out of their room. A PARTIAL_WAKE_LOCK keeps those threads
+     * scheduled; combined with the battery-optimization exemption (which
+     * stops Doze from deferring the lock) the link survives idle.
+     *
+     * Driven by EridanusViewModel from (user "keep connection alive" setting
+     * && connected to a hub). The lock is non-reference-counted, so repeated
+     * acquire/release calls collapse to a single held/unheld state and this
+     * is safe to call on every connection-state change. Thread-safe via
+     * [wakeLockLock].
+     */
+    @Suppress("WakelockTimeout") // intentionally indefinite; released on
+    // disconnect / toggle-off / onDestroy, gated behind a user opt-in.
+    fun setKeepAliveWakeLock(held: Boolean) {
+        synchronized(wakeLockLock) {
+            if (held) {
+                val lock = wakeLock ?: run {
+                    val pm = getSystemService(POWER_SERVICE) as PowerManager
+                    pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+                        .also { it.setReferenceCounted(false); wakeLock = it }
+                }
+                if (!lock.isHeld) {
+                    lock.acquire()
+                    Log.i(TAG, "Keep-alive wake lock acquired")
+                }
+            } else {
+                wakeLock?.takeIf { it.isHeld }?.let {
+                    it.release()
+                    Log.i(TAG, "Keep-alive wake lock released")
+                }
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -224,6 +272,7 @@ class PyReticulumService : Service() {
         private const val TAG = "PyReticulumService"
         private const val CHANNEL_ID = "reticulum_py"
         private const val NOTIFICATION_ID = 0xCA1F  // arbitrary, low-collision
+        private const val WAKE_LOCK_TAG = "eridanus:keep-alive"
 
         private val worker = Executors.newSingleThreadExecutor { r ->
             Thread(r, "py-rns-boot").apply { isDaemon = true }

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -165,15 +166,21 @@ fun RoomListScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(16.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
                                         text = "#$room",
                                         style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.weight(1f),
                                     )
                                     if (unread > 0) {
                                         Badge { Text("$unread") }
+                                    }
+                                    // Explicit affordance for the same action
+                                    // as tapping the card — opens the room.
+                                    Button(onClick = { onNavigateToChat(room) }) {
+                                        Text("Go")
                                     }
                                 }
                             }

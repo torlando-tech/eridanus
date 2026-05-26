@@ -141,6 +141,17 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+        debug {
+            // Distinct applicationId so a debug build installs *alongside*
+            // the release-signed app instead of being blocked by the
+            // signature mismatch (debug keystore vs release keystore can
+            // never replace each other without an uninstall that wipes the
+            // identity/rooms). Stacks on the per-flavor suffix, e.g.
+            // tech.torlando.eridanus.python.debug. Per-variant launcher
+            // labels live in app/src/<flavor>Debug/res/values/strings.xml
+            // ("Eridanus Test") so the two are distinguishable.
+            applicationIdSuffix = ".debug"
+        }
     }
 
     // rnsImpl flavor dimension — see Memory/eridanus/rns-backend-dual-build.md.

@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -208,6 +209,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         viewModelScope, SharingStarted.Eagerly, true
     )
 
+    val keepConnectionAlive: StateFlow<Boolean> = prefs.keepConnectionAlive.stateIn(
+        viewModelScope, SharingStarted.Eagerly, false
+    )
+
     // Identities
     private var hubIdentity: RnsIdentity? = null
     private var clientIdentity: RnsIdentity? = null
@@ -247,6 +252,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     init {
         initReticulum()
         observeNotificationStatus()
+        observeKeepAliveWakeLock()
     }
 
     private fun initReticulum() {
@@ -579,6 +585,24 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
+     * Hold a partial wake lock (via the backend's hosting service) only while
+     * the user's "keep connection alive in background" setting is on *and*
+     * we're actually connected to a hub. That's the one state where Doze
+     * suspending the CPU would silently drop the link; holding the lock any
+     * other time is pure battery waste. distinctUntilChanged collapses the
+     * combine's churn so the lock is only toggled on real transitions.
+     */
+    private fun observeKeepAliveWakeLock() {
+        viewModelScope.launch {
+            combine(keepConnectionAlive, _clientState) { enabled, state ->
+                enabled && state == tech.torlando.eridanus.rrc.ClientState.ACTIVE
+            }.distinctUntilChanged().collect { shouldHold ->
+                backend.setKeepAliveWakeLock(shouldHold)
+            }
+        }
+    }
+
+    /**
      * User-driven retry from the "No shared instance — tap to retry"
      * banner. Delegates to [restartBackend], which is what the background
      * watchdog also uses, so the two paths share a single serialized
@@ -842,6 +866,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun setDarkMode(option: DarkModeOption) {
         viewModelScope.launch { prefs.setDarkMode(option) }
+    }
+
+    fun setKeepConnectionAlive(enabled: Boolean) {
+        viewModelScope.launch { prefs.setKeepConnectionAlive(enabled) }
     }
 
     fun setNickname(nick: String) {

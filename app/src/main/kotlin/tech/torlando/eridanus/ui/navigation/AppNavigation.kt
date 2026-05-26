@@ -159,6 +159,13 @@ fun AppNavigation(viewModel: EridanusViewModel) {
                 composable(Screen.Discover.route) {
                     HubBrowserScreen(
                         viewModel = viewModel,
+                        onNavigateToRooms = {
+                            navController.navigate(Screen.Rooms.route) {
+                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                     )
                 }
                 composable(Screen.Host.route) {

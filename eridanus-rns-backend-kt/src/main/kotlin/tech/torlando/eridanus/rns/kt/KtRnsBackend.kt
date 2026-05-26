@@ -86,6 +86,13 @@ class KtRnsBackend : RnsBackend {
         // ReticulumService app-status notification hook".
     }
 
+    override fun setKeepAliveWakeLock(held: Boolean) {
+        // No-op on the kotlin flavor. rns-android's ReticulumService manages
+        // its own wake locks for the native RNS stack; there's no app-facing
+        // hook to drive one yet. Same reticulum-kt follow-up as
+        // setForegroundStatus.
+    }
+
     override val identities = KtRnsIdentityFactory
     override val destinations = KtRnsDestinationFactory
     override val links = KtRnsLinkFactory

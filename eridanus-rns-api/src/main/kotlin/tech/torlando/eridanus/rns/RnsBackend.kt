@@ -52,6 +52,29 @@ interface RnsBackend {
      */
     fun setForegroundStatus(text: String)
 
+    /**
+     * Acquire ([held] = true) or release ([held] = false) a partial wake
+     * lock that keeps the CPU scheduling the backend's network threads while
+     * the device is in Doze / deep idle.
+     *
+     * The hosting foreground service keeps the *process* alive; it does not
+     * keep the *CPU* running. Without this lock an idle device suspends the
+     * SoC, the RNS interface + link-keepalive threads freeze, and the hub
+     * tears the link down (no keepalive within its timeout) — silently
+     * dropping the user out of their room. Holding a partial wake lock,
+     * together with the battery-optimization exemption that stops Doze from
+     * deferring it, keeps those threads ticking.
+     *
+     * This is a continuous battery cost, so callers gate it behind the user's
+     * "keep connection alive in background" setting and only hold it while
+     * actually connected. The python backend forwards this to
+     * PyReticulumService; the kotlin backend currently no-ops (rns-android's
+     * ReticulumService manages its own locks).
+     *
+     * Idempotent and safe to call from any thread.
+     */
+    fun setKeepAliveWakeLock(held: Boolean)
+
     val identities: RnsIdentityFactory
     val destinations: RnsDestinationFactory
     val links: RnsLinkFactory

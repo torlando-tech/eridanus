@@ -28,9 +28,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,6 +68,8 @@ import tech.torlando.eridanus.util.BatteryOptimizationManager
 fun BatteryOptimizationCard(
     isExpanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
+    keepConnectionAlive: Boolean,
+    onKeepConnectionAliveChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -224,6 +228,40 @@ fun BatteryOptimizationCard(
                         ) {
                             Text("Open Battery Settings Manually")
                         }
+                    }
+
+                    // Keep-alive toggle. Lives in this card because it only
+                    // works in concert with the exemption above: the wake
+                    // lock it drives keeps the CPU running, and the exemption
+                    // stops Doze from deferring that lock.
+                    HorizontalDivider(color = contentColor.copy(alpha = 0.2f))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onKeepConnectionAliveChange(!keepConnectionAlive) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Keep connection alive in background",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = contentColor,
+                            )
+                            Text(
+                                text = "Stay in your room while the screen is off. Uses more " +
+                                    "battery; needs the exemption above to work reliably.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = contentColor,
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Switch(
+                            checked = keepConnectionAlive,
+                            onCheckedChange = onKeepConnectionAliveChange,
+                        )
                     }
                 }
             }

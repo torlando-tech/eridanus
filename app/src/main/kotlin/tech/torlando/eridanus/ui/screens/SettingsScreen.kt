@@ -57,6 +57,7 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     val wasConnectedToShared by viewModel.wasConnectedToSharedInstance.collectAsState()
     val isRestarting by viewModel.isRestarting.collectAsState()
     val clientState by viewModel.clientState.collectAsState()
+    val keepConnectionAlive by viewModel.keepConnectionAlive.collectAsState()
     var localNickname by remember { mutableStateOf(nickname) }
     var batteryCardExpanded by remember { mutableStateOf(false) }
     var identityCardExpanded by remember { mutableStateOf(false) }
@@ -152,6 +153,8 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
             BatteryOptimizationCard(
                 isExpanded = batteryCardExpanded,
                 onExpandedChange = { batteryCardExpanded = it },
+                keepConnectionAlive = keepConnectionAlive,
+                onKeepConnectionAliveChange = { viewModel.setKeepConnectionAlive(it) },
             )
 
             // Dark mode
