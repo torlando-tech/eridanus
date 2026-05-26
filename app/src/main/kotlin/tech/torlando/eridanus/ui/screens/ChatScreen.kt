@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -50,11 +51,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 import tech.torlando.eridanus.viewmodel.ChatMessage
@@ -422,11 +432,67 @@ private fun MessageItem(message: ChatMessage) {
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Text(
+                LinkifiedText(
                     text = message.body,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
+    }
+}
+
+/**
+ * Message body text that (a) is selectable so the user can copy it (handy
+ * for grabbing a pasted URL) and (b) renders any http(s) links as tappable,
+ * underlined primary-colored spans that open in the system browser.
+ *
+ * Tappable links and text selection coexisting in one [Text] is a Compose
+ * 1.7 capability ([LinkAnnotation] inside a [SelectionContainer]); on 1.6
+ * the two gesture handlers fought each other.
+ */
+@Composable
+private fun LinkifiedText(
+    text: String,
+    style: TextStyle,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, linkColor) { linkifyUrls(text, linkColor) }
+    SelectionContainer {
+        // LinkAnnotation.Url with no explicit listener routes taps through
+        // the LocalUriHandler, which opens the platform browser.
+        Text(text = annotated, style = style)
+    }
+}
+
+private val URL_REGEX = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
+
+/** Trailing characters a URL run commonly grabs but that aren't part of it. */
+private const val URL_TRAILING_TRIM = ".,;:!?)]}\"'"
+
+/**
+ * Build an [AnnotatedString] where each http(s) URL in [text] becomes a
+ * tappable [LinkAnnotation.Url] styled with [linkColor] + underline. Returns
+ * a plain string when there are no links.
+ */
+private fun linkifyUrls(text: String, linkColor: Color): AnnotatedString {
+    val matches = URL_REGEX.findAll(text).toList()
+    if (matches.isEmpty()) return AnnotatedString(text)
+    val linkStyles = TextLinkStyles(
+        style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+    )
+    return buildAnnotatedString {
+        var cursor = 0
+        for (m in matches) {
+            val rawUrl = m.value
+            val url = rawUrl.trimEnd(*URL_TRAILING_TRIM.toCharArray())
+            if (m.range.first > cursor) append(text.substring(cursor, m.range.first))
+            withLink(LinkAnnotation.Url(url = url, styles = linkStyles)) {
+                append(url)
+            }
+            // Trailing punctuation we trimmed off the link stays as plain text.
+            if (rawUrl.length > url.length) append(rawUrl.substring(url.length))
+            cursor = m.range.last + 1
+        }
+        if (cursor < text.length) append(text.substring(cursor))
     }
 }
