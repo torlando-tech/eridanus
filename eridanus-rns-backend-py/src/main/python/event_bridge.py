@@ -25,19 +25,28 @@ signal.signal = lambda *args, **kwargs: None
 import RNS
 
 
-def announce_handler(kt_cb):
+def announce_handler(kt_cb, aspect_filter=None):
     """Reticulum's Transport.register_announce_handler requires an object
     with `aspect_filter` and `received_announce(destination_hash,
     announced_identity, app_data)`. Wraps a Kotlin
     PyAnnounceCallback (Function3<ByteArray, PyObject?, ByteArray?, Boolean>)
-    into that shape."""
+    into that shape.
+
+    aspect_filter (e.g. "rrc.hub") scopes which announces RNS delivers:
+    Transport.inbound calls received_announce only when the announce's
+    destination hash matches hash_from_name_and_identity(aspect_filter,
+    announced_identity) (Transport.py:2046). None (the old behaviour) means
+    EVERY announce on the network is delivered — which fed arbitrary foreign
+    app_data (LXMF, NomadNet, …) into the app's CBOR decoder and could drive
+    a multi-GB allocation off a malformed length prefix."""
     class _Handler:
-        aspect_filter = None
         def received_announce(self, destination_hash, announced_identity, app_data):
             return bool(kt_cb.call(bytes(destination_hash),
                                    announced_identity,
                                    bytes(app_data) if app_data is not None else None))
-    return _Handler()
+    h = _Handler()
+    h.aspect_filter = aspect_filter
+    return h
 
 
 def link_callback(kt_cb):

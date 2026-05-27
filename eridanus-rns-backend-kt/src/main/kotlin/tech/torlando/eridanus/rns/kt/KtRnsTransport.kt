@@ -28,6 +28,7 @@ object KtRnsTransport : RnsTransport {
     }
 
     override fun registerAnnounceHandler(
+        aspectFilter: String?,
         handler: RnsAnnounceHandler,
     ): RnsAnnounceHandlerRegistration {
         // Hold a reference to the exact reticulum-kt AnnounceHandler we
@@ -36,7 +37,9 @@ object KtRnsTransport : RnsTransport {
         val ktHandler = AnnounceHandler { destinationHash, announcedIdentity, appData ->
             handler.onAnnounce(destinationHash, KtRnsIdentity(announcedIdentity), appData)
         }
-        Transport.registerAnnounceHandler(ktHandler)
+        // aspectFilter scopes delivery to matching destinations only (e.g.
+        // "rrc.hub"); reticulum-kt matches it via hashFromNameAndIdentity.
+        Transport.registerAnnounceHandler(ktHandler, aspectFilter)
         return RnsAnnounceHandlerRegistration {
             Transport.deregisterAnnounceHandler(ktHandler)
         }

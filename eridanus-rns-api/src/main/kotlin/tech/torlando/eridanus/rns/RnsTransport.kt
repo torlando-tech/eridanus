@@ -30,5 +30,23 @@ interface RnsTransport {
 
     fun registerDestination(destination: RnsDestination)
     fun deregisterDestination(destination: RnsDestination)
-    fun registerAnnounceHandler(handler: RnsAnnounceHandler): RnsAnnounceHandlerRegistration
+
+    /**
+     * Register an announce handler.
+     *
+     * [aspectFilter] is the destination name (e.g. "rrc.hub") the handler
+     * cares about. When non-null, the backend only invokes the handler for
+     * announces whose destination hash matches
+     * `hash_from_name_and_identity(aspectFilter, announcedIdentity)` — the
+     * same matching upstream RNS (Transport.py) and reticulum-kt both apply.
+     * Passing null delivers EVERY announce on the network to the handler,
+     * which is both wasteful and dangerous: app-side code then has to decode
+     * arbitrary foreign app_data (LXMF, NomadNet, …), and a malformed length
+     * prefix can drive the CBOR decoder into a multi-GB allocation. Always
+     * pass the specific aspect unless you genuinely want the firehose.
+     */
+    fun registerAnnounceHandler(
+        aspectFilter: String?,
+        handler: RnsAnnounceHandler,
+    ): RnsAnnounceHandlerRegistration
 }
