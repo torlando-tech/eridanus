@@ -14,6 +14,11 @@ import tech.torlando.eridanus.rns.RnsBackendConfig
 class KtRnsBackend : RnsBackend {
     override val identifier: String = "kotlin"
 
+    // reticulum-kt exposes no runtime version constant, so report the bundled
+    // coordinate. KEEP IN SYNC with the rns-android dependency version in
+    // eridanus-rns-backend-kt/build.gradle.kts.
+    override val reticulumVersion: String = "v0.0.19 (reticulum-kt)"
+
     override fun start(context: Context, config: RnsBackendConfig) {
         ReticulumService.start(
             context,

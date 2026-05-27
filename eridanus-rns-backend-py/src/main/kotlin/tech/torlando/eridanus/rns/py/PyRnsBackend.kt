@@ -29,6 +29,17 @@ class PyRnsBackend(context: Context) : RnsBackend {
 
     override val identifier: String = "python"
 
+    // Upstream RNS exposes its version as the module attribute RNS.__version__
+    // (RNS/_version.py). Read it at runtime so the About card always reflects
+    // the actually-loaded wheel rather than a value we'd have to keep in sync.
+    override val reticulumVersion: String
+        get() = try {
+            rns.get("__version__")?.toString() ?: "unknown"
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read RNS.__version__", e)
+            "unknown"
+        }
+
     override fun start(context: Context, config: RnsBackendConfig) {
         // shareInstance=true would mean "deliberately become the shared-
         // instance server"; eridanus doesn't expose that, the service itself

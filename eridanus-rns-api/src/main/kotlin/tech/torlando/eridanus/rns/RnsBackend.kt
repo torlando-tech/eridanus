@@ -7,6 +7,14 @@ import android.content.Context
 interface RnsBackend {
     val identifier: String
 
+    /**
+     * Human-readable version of the embedded Reticulum stack, for display in
+     * the About card. The python flavor reports upstream RNS's runtime
+     * `__version__` (e.g. "1.2.5"); the kotlin flavor reports the bundled
+     * reticulum-kt coordinate (e.g. "v0.0.19 (reticulum-kt)").
+     */
+    val reticulumVersion: String
+
     fun start(context: Context, config: RnsBackendConfig)
     fun stop(context: Context)
     val isRunning: Boolean
