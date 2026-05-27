@@ -210,6 +210,31 @@ class RrcClient(
         }
     }
 
+    /**
+     * Attach to a hub over an already-established [providedLink] — e.g. an
+     * in-process [LoopbackLink] to a hub hosted by this same instance — and
+     * run the HELLO handshake. Bypasses RNS link establishment entirely; used
+     * for own-hub connect, where a real link would have to round-trip through
+     * the shared-instance host and mis-route the loopback.
+     */
+    fun connectViaLink(providedLink: RnsLink) {
+        if (state != ClientState.DISCONNECTED) disconnect()
+        link = providedLink
+        providedLink.setPacketCallback { data -> onPacket(data) }
+        providedLink.setLinkClosedCallback { _ ->
+            Log.d(TAG, "Link closed")
+            state = ClientState.DISCONNECTED
+            _joinedRooms.clear()
+            _pendingResources.clear()
+            link = null
+            _events.tryEmit(RrcEvent.Disconnected)
+        }
+        setupResourceCallbacks(providedLink)
+        state = ClientState.AWAITING_WELCOME
+        Log.i(TAG, "connectViaLink: attached in-process, sending HELLO")
+        sendHello(providedLink)
+    }
+
     fun disconnect() {
         val currentLink = link
         link = null
