@@ -382,6 +382,16 @@ class RrcHub(
 
     // ── Link lifecycle ─────────────────────────────────────────────────
 
+    /**
+     * Accept an in-process [LoopbackLink] from a client running in this same
+     * process (own-hub connect). Routes through the normal link-established
+     * path so the session, callbacks and roster behave exactly like a network
+     * client — the only difference is the link never touches Reticulum.
+     */
+    internal fun acceptLoopbackClient(link: RnsLink) {
+        onLinkEstablished(link)
+    }
+
     private fun onLinkEstablished(link: RnsLink) {
         Log.i(TAG, "New link established from remote")
         val session = HubSession(link)

@@ -902,10 +902,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun connectToOwnHub() {
-        val hash = _hubDestHash.value ?: run {
-            Log.w(TAG, "connectToOwnHub: no hub dest hash")
-            return
-        }
         val hubId = hubIdentity ?: run {
             Log.w(TAG, "connectToOwnHub: no hub identity")
             return
@@ -914,7 +910,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             Log.w(TAG, "connectToOwnHub: no client identity")
             return
         }
-        Log.i(TAG, "connectToOwnHub: hash=${hash.joinToString("") { "%02x".format(it) }}")
+        // The hub lives in this same process, so a real RNS link to it would
+        // have to round-trip through the external shared-instance host, which
+        // mis-routes the loopback (the hub's WELCOME comes back to the hub,
+        // not the client). Wire client↔hub in-process instead. Requires the
+        // hub to be running — which it is whenever the Connect affordance is
+        // shown. See LoopbackLink and a645cf5 (the "never host" switch that
+        // turned own-hub links from in-process loopbacks into host round-trips).
+        val hub = rrcHub ?: run {
+            Log.w(TAG, "connectToOwnHub: hub not running")
+            return
+        }
+        Log.i(TAG, "connectToOwnHub: wiring in-process loopback to local hub")
         _connectionError.value = null
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
@@ -929,21 +936,12 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
 
-                client.connect(hash, knownIdentity = hubId)
-
-                // Connection timeout
-                launch {
-                    delay(30_000)
-                    if (_clientState.value == tech.torlando.eridanus.rrc.ClientState.CONNECTING ||
-                        _clientState.value == tech.torlando.eridanus.rrc.ClientState.AWAITING_WELCOME
-                    ) {
-                        Log.w(TAG, "Own hub connection timed out after 30s")
-                        client.disconnect()
-                        rrcClient = null
-                        _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
-                        _connectionError.value = "Connection timed out"
-                    }
-                }
+                val (clientEnd, hubEnd) = tech.torlando.eridanus.rrc.LoopbackLink.pair(
+                    clientIdentity = clientId,
+                    hubIdentity = hubId,
+                )
+                hub.acceptLoopbackClient(hubEnd)
+                client.connectViaLink(clientEnd)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect to own hub", e)
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
