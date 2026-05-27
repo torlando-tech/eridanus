@@ -95,6 +95,8 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
      * trust-skeptical users on the python flavor can confirm the reference
      * stack is what's running. */
     val backendIdentifier: String = backend.identifier
+    /** Version of the embedded Reticulum stack, shown in the About card. */
+    val reticulumVersion: String = backend.reticulumVersion
     private val prefs = PreferencesManager(application)
     private val identityStore = IdentityStore(application, backend.identities)
     private val hubDao = EridanusDatabase.getInstance(application).hubDao()

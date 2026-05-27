@@ -40,7 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.data.DarkModeOption
+import tech.torlando.eridanus.ui.components.AboutCard
 import tech.torlando.eridanus.ui.components.BatteryOptimizationCard
+import tech.torlando.eridanus.ui.components.CollapsibleCard
 import tech.torlando.eridanus.ui.components.IdentityCard
 import tech.torlando.eridanus.ui.components.SharedInstanceBannerCard
 import tech.torlando.eridanus.ui.theme.PresetTheme
@@ -61,6 +63,8 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     var localNickname by remember { mutableStateOf(nickname) }
     var batteryCardExpanded by remember { mutableStateOf(false) }
     var identityCardExpanded by remember { mutableStateOf(false) }
+    var themeCardExpanded by remember { mutableStateOf(false) }
+    var aboutCardExpanded by remember { mutableStateOf(false) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
         DarkModeOption.LIGHT -> false
@@ -193,58 +197,53 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                 }
             }
 
-            // Theme picker
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Theme",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    PresetTheme.entries.forEach { preset ->
-                        val isSelected = preset == currentTheme
-                        val colors = preset.getPreviewColors(isDark)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                    else MaterialTheme.colorScheme.surface
-                                )
-                                .clickable { viewModel.setTheme(preset) }
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            // Color preview dots
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf(colors.first, colors.second, colors.third).forEach { color ->
-                                    Box(
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .clip(CircleShape)
-                                            .background(color)
-                                            .then(
-                                                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                                                else Modifier
-                                            ),
-                                    )
-                                }
-                            }
-                            Column {
-                                Text(
-                                    text = preset.displayName,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                Text(
-                                    text = preset.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Theme picker (collapsible)
+            CollapsibleCard(
+                title = "Theme",
+                isExpanded = themeCardExpanded,
+                onExpandedChange = { themeCardExpanded = it },
+            ) {
+                PresetTheme.entries.forEach { preset ->
+                    val isSelected = preset == currentTheme
+                    val colors = preset.getPreviewColors(isDark)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                else MaterialTheme.colorScheme.surface
+                            )
+                            .clickable { viewModel.setTheme(preset) }
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // Color preview dots
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(colors.first, colors.second, colors.third).forEach { color ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(CircleShape)
+                                        .background(color)
+                                        .then(
+                                            if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                            else Modifier
+                                        ),
                                 )
                             }
+                        }
+                        Column {
+                            Text(
+                                text = preset.displayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = preset.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -257,6 +256,14 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
                 isExpanded = identityCardExpanded,
                 onExpandedChange = { identityCardExpanded = it },
                 viewModel = viewModel,
+            )
+
+            // App version, embedded Reticulum stack, and device info.
+            AboutCard(
+                isExpanded = aboutCardExpanded,
+                onExpandedChange = { aboutCardExpanded = it },
+                backendIdentifier = viewModel.backendIdentifier,
+                reticulumVersion = viewModel.reticulumVersion,
             )
 
             Spacer(modifier = Modifier.height(32.dp))
