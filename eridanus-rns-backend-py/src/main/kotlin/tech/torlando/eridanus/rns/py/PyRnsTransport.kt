@@ -28,6 +28,19 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
             .toJava(Boolean::class.javaObjectType)
 
     override fun registerDestination(destination: RnsDestination) {
+        // Upstream RNS registers a destination inside Destination.__init__
+        // (Destination.py:196), and Transport.register_destination then
+        // raises on the redundant re-register of an IN destination:
+        //   KeyError: 'Attempt to register an already registered destination.'
+        // reticulum-kt's Transport.registerDestination is idempotent (it
+        // no-ops when the hash is already registered — Transport.kt:936), and
+        // the shared RrcHub.start() relies on that contract: it calls
+        // destinations.create() (which already registers) and *then*
+        // registerDestination(). Without mirroring the idempotent contract
+        // here, hub hosting crashes on start on the python flavor and the
+        // Host toggle silently does nothing. See find_local_destination in
+        // event_bridge.py for the hash scan backing findDestination().
+        if (findDestination(destination.hash) != null) return
         rns.get("Transport")!!.callAttr("register_destination", destination.asPy())
     }
 
