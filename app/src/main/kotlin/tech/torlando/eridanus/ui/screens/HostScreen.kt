@@ -358,10 +358,6 @@ fun HostScreen(viewModel: EridanusViewModel, onNavigateToRooms: () -> Unit = {})
                     )
                     val options = listOf(
                         0 to "Off",
-                        30 to "30s",
-                        60 to "1m",
-                        300 to "5m",
-                        600 to "10m",
                         3600 to "1h",
                         10800 to "3h",
                         21600 to "6h",
@@ -378,6 +374,12 @@ fun HostScreen(viewModel: EridanusViewModel, onNavigateToRooms: () -> Unit = {})
                                 label = { Text(label) },
                             )
                         }
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.announceHub() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Announce Now")
                     }
                 }
             }
