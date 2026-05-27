@@ -629,7 +629,12 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 handleHubAnnounce(destHash, appData)
                 true
             }
-            announceHandlerRegistration = backend.transport.registerAnnounceHandler(handler)
+            // Scope delivery to rrc.hub announces only. Without an aspect
+            // filter the backend hands us EVERY announce on the network, and
+            // decoding foreign (non-RRC) app_data as CBOR can drive the
+            // decoder into a multi-GB allocation off a bogus length prefix.
+            announceHandlerRegistration =
+                backend.transport.registerAnnounceHandler(RrcConstants.DEST_NAME, handler)
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)

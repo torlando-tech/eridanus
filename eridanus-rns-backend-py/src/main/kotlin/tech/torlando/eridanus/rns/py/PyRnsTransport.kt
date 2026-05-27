@@ -49,6 +49,7 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
     }
 
     override fun registerAnnounceHandler(
+        aspectFilter: String?,
         handler: RnsAnnounceHandler,
     ): RnsAnnounceHandlerRegistration {
         val ktCb = PyAnnounceCallback { destHash, announcedIdentity, appData ->
@@ -60,9 +61,12 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
         }
         // event_bridge.announce_handler wraps the kotlin callback in a python
         // object with the aspect_filter / received_announce shape RNS wants.
-        // RNS.Transport.deregister_announce_handler keys on that exact object,
-        // so the returned token closes over `pyHandler`.
-        val pyHandler = bridge.callAttr("announce_handler", ktCb)
+        // aspectFilter (e.g. "rrc.hub") scopes delivery to matching
+        // destinations; null would deliver every announce on the network —
+        // see RnsTransport.registerAnnounceHandler. RNS keys
+        // deregister_announce_handler on the exact object, so the returned
+        // token closes over `pyHandler`.
+        val pyHandler = bridge.callAttr("announce_handler", ktCb, aspectFilter)
         rns.get("Transport")!!.callAttr("register_announce_handler", pyHandler)
         return RnsAnnounceHandlerRegistration {
             rns.get("Transport")!!.callAttr("deregister_announce_handler", pyHandler)
