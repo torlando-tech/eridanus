@@ -616,6 +616,81 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * User-driven full shutdown — drop any hub link, stop the hosted hub,
+     * tear the backend's foreground service down, then hand back to the UI
+     * to finish the Activity and kill the process. After this returns
+     * Eridanus has zero background presence: no notification, no service,
+     * no announce listener.
+     *
+     * Async so we can wait briefly for the backend service to actually
+     * exit before the caller kills the process — that window is what lets
+     * PyReticulumService.onDestroy run RNS.exit_handler cleanly on the
+     * python flavor, and rns-android's StoreLifecycle.drain flush its
+     * announce-cache on the kotlin flavor. [onComplete] runs on the main
+     * thread after teardown (or after a 3s timeout, whichever first); it
+     * should call `activity.finishAndRemoveTask()` and
+     * `android.os.Process.killProcess(myPid())`.
+     */
+    fun fullShutdown(onComplete: () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "User-requested full shutdown")
+            try {
+                // Cancel the watchdog first so it can't see the about-to-
+                // disappear shared-instance host and kick off a restart
+                // mid-teardown.
+                watchdogJob?.cancel()
+                watchdogJob = null
+
+                // Drop the hub link and any hosted hub before the service
+                // dies, so each end has a chance to send its close packet
+                // rather than just vanishing on the wire.
+                clientEventJob?.cancel()
+                clientEventJob = null
+                rrcClient?.disconnect()
+                rrcClient = null
+                rrcHub?.stop()
+                rrcHub = null
+                _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                _hubRunning.value = false
+                _hubClients.value = 0
+                _hubDestHash.value = null
+
+                // Deregister our announce handler so the RNS instance
+                // about to be torn down doesn't dispatch one last announce
+                // through us during its own shutdown.
+                announceHandlerRegistration?.deregister()
+                announceHandlerRegistration = null
+
+                // Stop the backend foreground service. PyReticulumService.
+                // onDestroy runs RNS.Reticulum.exit_handler; rns-android's
+                // ReticulumService runs its own StoreLifecycle.drain.
+                backend.stop(getApplication())
+
+                // Wait briefly for the service to actually fall over before
+                // returning to the caller (which will killProcess). Same
+                // 3s ceiling the backends' own restart() paths use as a
+                // teardown budget.
+                val deadline = System.currentTimeMillis() + 3_000L
+                while (System.currentTimeMillis() < deadline && backend.isRunning) {
+                    delay(100)
+                }
+                _reticulumStarted.value = false
+                _connectedToSharedInstance.value = false
+                Log.i(TAG, "Shutdown complete (backend running=${backend.isRunning})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during full shutdown", e)
+            } finally {
+                // Hop back to the main thread for the activity finish +
+                // killProcess — finishAndRemoveTask must be called on the
+                // UI thread.
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onComplete()
+                }
+            }
+        }
+    }
+
 
     private fun registerAnnounceHandler() {
         // Drop the previous registration first. This is called on every

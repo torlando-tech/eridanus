@@ -45,6 +45,7 @@ import tech.torlando.eridanus.ui.components.BatteryOptimizationCard
 import tech.torlando.eridanus.ui.components.CollapsibleCard
 import tech.torlando.eridanus.ui.components.IdentityCard
 import tech.torlando.eridanus.ui.components.SharedInstanceBannerCard
+import tech.torlando.eridanus.ui.components.ShutdownCard
 import tech.torlando.eridanus.ui.theme.PresetTheme
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
@@ -64,6 +65,7 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
     var batteryCardExpanded by remember { mutableStateOf(false) }
     var identityCardExpanded by remember { mutableStateOf(false) }
     var themeCardExpanded by remember { mutableStateOf(false) }
+    var shutdownCardExpanded by remember { mutableStateOf(false) }
     var aboutCardExpanded by remember { mutableStateOf(false) }
     val isDark = when (darkMode) {
         DarkModeOption.SYSTEM -> isSystemInDarkTheme()
@@ -255,6 +257,16 @@ fun SettingsScreen(viewModel: EridanusViewModel) {
             IdentityCard(
                 isExpanded = identityCardExpanded,
                 onExpandedChange = { identityCardExpanded = it },
+                viewModel = viewModel,
+            )
+
+            // Full shutdown — disconnect, stop the RNS foreground service,
+            // finish the Activity, kill the process. Sits between Identity
+            // and About so it's at the end of the "destructive" cluster
+            // without being the literal last thing on the screen.
+            ShutdownCard(
+                isExpanded = shutdownCardExpanded,
+                onExpandedChange = { shutdownCardExpanded = it },
                 viewModel = viewModel,
             )
 
