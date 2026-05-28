@@ -1262,8 +1262,14 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 }
                 // Parse topic notices
                 parseTopicNotice(event.body)
-                // Parse /who response for member count
-                parseMembersNotice(event.body)
+                // /who responses are consumed silently — they update
+                // _roomMemberList (driving the member sheet and the
+                // structured join-notice render path) and the inline
+                // 'members in #room: ...' line is redundant with the
+                // sheet. The auto-/who fired from MemberJoined would
+                // otherwise put one of these in the chat scrollback for
+                // every peer join.
+                if (parseMembersNotice(event.body)) return
 
                 val room = event.room ?: _currentRoom.value ?: return
                 addMessage(room, ChatMessage(
@@ -1301,15 +1307,26 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 val counts = _roomMemberCounts.value.toMutableMap()
                 counts[event.room] = (counts[event.room] ?: 0) + 1
                 _roomMemberCounts.value = counts
-                // Keep the member list in step with the count (nick filled in
-                // by the next /who or the joiner's first message — see the
-                // MessageReceived handler).
+                // Keep the member list in step with the count (nick filled
+                // in by the auto-/who below or the joiner's first message —
+                // see the MessageReceived handler).
                 val prefix = event.memberHash.toHex().take(12)
                 val memberList = _roomMemberList.value.toMutableMap()
                 val existing = memberList[event.room] ?: emptyList()
                 if (existing.none { it.hashPrefix == prefix }) {
                     memberList[event.room] = existing + RoomMember(nick = null, hashPrefix = prefix)
                     _roomMemberList.value = memberList
+                }
+                // Auto-/who so the joiner's nick resolves in ~1 RTT
+                // instead of waiting for them to speak. The 'members in
+                // #room' response is consumed silently in NoticeReceived
+                // — it lands in _roomMemberList and the structured join
+                // notice above re-renders with the joiner's nick on the
+                // next recomposition.
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        rrcClient?.sendCommand("/who ${event.room}", room = event.room)
+                    } catch (_: Exception) {}
                 }
             }
 
