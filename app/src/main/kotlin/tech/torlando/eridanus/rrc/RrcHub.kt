@@ -418,9 +418,12 @@ class RrcHub(
             roomManager.removeMember(room, link)
 
             if (peerHash != null && remaining.isNotEmpty()) {
+                // Advisory K_NICK (matches rrcd 0.3.2) so a "<nick> left"
+                // renders for an abrupt link drop too, not just a clean PART.
                 val parted = RrcEnvelope.make(
                     T_PARTED, src = identity.hash, room = room,
                     body = listOf(peerHash),
+                    nick = session.nick,
                 )
                 val payload = RrcCodec.encode(parted)
                 for (memberLink in remaining) {
@@ -544,12 +547,15 @@ class RrcHub(
             roomManager.getOrCreateState(room)
         }
 
-        // Notify existing members: T_JOINED body=[joinerHash]
+        // Notify existing members: T_JOINED body=[joinerHash]. Attach the
+        // joiner's nick as advisory K_NICK (matches rrcd 0.3.2) so clients
+        // can render "<nick> joined" immediately without a follow-up /who.
         val existingMembers = roomManager.getMembers(room).toList()
         if (existingMembers.isNotEmpty()) {
             val notification = RrcEnvelope.make(
                 T_JOINED, src = identity.hash, room = room,
                 body = listOf(peerHash),
+                nick = session.nick,
             )
             val notificationPayload = RrcCodec.encode(notification)
             for (memberLink in existingMembers) {
@@ -599,7 +605,9 @@ class RrcHub(
         val peerHash = session.peerHash
         session.rooms.remove(room)
 
-        // Notify remaining members with parter's hash
+        // Notify remaining members with parter's hash + advisory K_NICK
+        // (matches rrcd 0.3.2) so clients can render "<nick> left" even if
+        // they never had the parter in their member list.
         val remaining = roomManager.getMembers(room).filter { it != link }
         roomManager.removeMember(room, link)
 
@@ -607,6 +615,7 @@ class RrcHub(
             val notification = RrcEnvelope.make(
                 T_PARTED, src = identity.hash, room = room,
                 body = listOf(peerHash),
+                nick = session.nick,
             )
             val notificationPayload = RrcCodec.encode(notification)
             for (memberLink in remaining) {
