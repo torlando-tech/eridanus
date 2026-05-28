@@ -23,11 +23,13 @@ Python flavor  —  eridanus-python-*.apk
 ---------------------------------------
 
 Bundles the upstream reference implementation of Reticulum (the Python
-RNS), vendored as a git submodule at eridanus-rns-backend-py/Reticulum/.
-It is licensed under the **Reticulum License** — see that directory's
-LICENSE file for the authoritative text. The Reticulum License is an
-MIT-derived permissive license with two additional field-of-use
-restrictions:
+RNS, https://github.com/markqvist/Reticulum), pip-installed at build
+time via Chaquopy — pinned to `rns==1.2.5` in
+eridanus-rns-backend-py/build.gradle.kts. It is licensed under the
+**Reticulum License** — see the LICENSE file at the root of the
+upstream Reticulum repository for the authoritative text. The
+Reticulum License is an MIT-derived permissive license with two
+additional field-of-use restrictions:
 
   - The software shall not be used in any kind of system which includes
     among its functions the ability to purposefully do harm to human
@@ -49,6 +51,11 @@ The python flavor also bundles:
     Python runtime/build system that embeds CPython into the APK.
   - CPython and the Python standard library — Python Software
     Foundation License.
+  - PyCA `cryptography` (https://github.com/pyca/cryptography) —
+    Apache-2.0 OR BSD-3-Clause — native crypto wheel from Chaquopy's
+    prebuilt package repo, used by RNS in place of its pure-python
+    fallback. Pinned to `>=42.0.0` in
+    eridanus-rns-backend-py/build.gradle.kts.
 
-Both are standard permissive licenses and impose no field-of-use
+All three are standard permissive licenses and impose no field-of-use
 restrictions.
