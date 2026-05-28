@@ -66,6 +66,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
+import tech.torlando.eridanus.ui.theme.usernameColor
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 import tech.torlando.eridanus.viewmodel.ChatMessage
 import tech.torlando.eridanus.viewmodel.RoomMember
@@ -281,6 +282,8 @@ fun ChatScreen(
                                     member.nick ?: "(no nick)",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
+                                    color = if (member.nick != null) usernameColor(member.hashPrefix)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
                                     member.hashPrefix,
@@ -381,7 +384,9 @@ private fun MemberRow(member: RoomMember) {
             text = member.nick ?: "(no nick)",
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = if (member.nick != null) FontWeight.Medium else FontWeight.Normal,
-            color = if (member.nick != null) MaterialTheme.colorScheme.onSurface
+            // Same per-user color as their chat messages (keyed on hashPrefix); the
+            // nickless placeholder stays muted since there's no username to color.
+            color = if (member.nick != null) usernameColor(member.hashPrefix)
                     else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
@@ -391,6 +396,14 @@ private fun MemberRow(member: RoomMember) {
         )
     }
 }
+
+/**
+ * First 6 bytes of a destination hash as lowercase hex (12 chars) — the same
+ * identity key [RoomMember.hashPrefix] uses, so a sender's message color matches
+ * their member-list color.
+ */
+private fun ByteArray.toColorKey(): String =
+    take(6).joinToString("") { "%02x".format(it) }
 
 @Composable
 private fun MessageItem(message: ChatMessage) {
@@ -430,7 +443,10 @@ private fun MessageItem(message: ChatMessage) {
                     text = message.nick ?: "???",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    // Key the color on the sender's stable destination-hash prefix
+                    // (same identity RoomMember uses), falling back to the nick when
+                    // unknown, so each speaker is consistently distinguishable.
+                    color = usernameColor(message.src?.toColorKey() ?: message.nick.orEmpty()),
                 )
                 LinkifiedText(
                     text = message.body,
