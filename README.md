@@ -11,7 +11,7 @@ Eridanus is an Android app that lets you create and join chatrooms on the Reticu
 ## What You Can Do
 
 - **Join chatrooms** - Browse rooms on a hub and jump in, just like IRC channels
-- **Create rooms** - Set up public or invite-only rooms with optional keys and moderation
+- **Host your own hub** - Set up public or invite-only rooms with optional keys and moderation
 - **Rich room modes** - Channel modes like +k (keyed), +i (invite-only), +m (moderated), +t (topic lock)
 - **Nicknames and presence** - Pick a nickname, see who's in the room, get join/part notices
 - **Works without internet** - Communicate over LoRa, Bluetooth LE, WiFi, or TCP - whatever path Reticulum can find
