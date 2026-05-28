@@ -66,6 +66,14 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val isNotice: Boolean = false,
     val isError: Boolean = false,
+    // For join/part notices: the affected member's full destination hash.
+    // Lets the renderer resolve a *current* nick from the room's member list
+    // at display time (and re-resolve on member-list updates), so a join
+    // notice that initially showed a hash retroactively gains a nickname
+    // once we learn it via a message or /who response. Body holds just the
+    // verb ("joined" / "left") in that case; the renderer prepends the
+    // actor — see MessageItem in ChatScreen.
+    val memberHash: ByteArray? = null,
 )
 
 class EridanusViewModel(application: Application) : AndroidViewModel(application) {
@@ -1175,6 +1183,30 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     body = event.body,
                     src = event.src,
                 ))
+                // Opportunistically backfill the sender's nick into the
+                // room's member list. Without this, a peer who joined
+                // before our last /who is in _roomMemberList with
+                // nick=null, and a structured join notice for them
+                // (memberHash-resolved at render time) can never gain a
+                // name no matter how much they talk.
+                if (event.src != null && !event.nick.isNullOrEmpty()) {
+                    val prefix = event.src.toHex().take(12)
+                    val memberList = _roomMemberList.value.toMutableMap()
+                    val list = memberList[event.room]
+                    if (list != null) {
+                        var changed = false
+                        val updated = list.map { m ->
+                            if (m.hashPrefix == prefix && m.nick != event.nick) {
+                                changed = true
+                                m.copy(nick = event.nick)
+                            } else m
+                        }
+                        if (changed) {
+                            memberList[event.room] = updated
+                            _roomMemberList.value = memberList
+                        }
+                    }
+                }
                 if (_currentRoom.value != event.room) {
                     val counts = _unreadCounts.value.toMutableMap()
                     counts[event.room] = (counts[event.room] ?: 0) + 1
@@ -1253,18 +1285,25 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             }
 
             is RrcEvent.MemberJoined -> {
-                val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
+                // Body holds just the verb; MessageItem prepends the actor
+                // (current nick if known, short hash otherwise) by looking
+                // memberHash up in the room's member list at render time.
+                // This way the notice shows the hash initially (T_JOINED
+                // carries no nick) and retroactively updates to the nick
+                // once we learn it.
                 addMessage(event.room, ChatMessage(
                     nick = null,
-                    body = "$shortHash joined",
+                    body = "joined",
                     src = null,
                     isNotice = true,
+                    memberHash = event.memberHash,
                 ))
                 val counts = _roomMemberCounts.value.toMutableMap()
                 counts[event.room] = (counts[event.room] ?: 0) + 1
                 _roomMemberCounts.value = counts
                 // Keep the member list in step with the count (nick filled in
-                // by the next /who).
+                // by the next /who or the joiner's first message — see the
+                // MessageReceived handler).
                 val prefix = event.memberHash.toHex().take(12)
                 val memberList = _roomMemberList.value.toMutableMap()
                 val existing = memberList[event.room] ?: emptyList()
@@ -1275,10 +1314,20 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             }
 
             is RrcEvent.MemberParted -> {
+                // Unlike MemberJoined, PART resolves the actor *now* and
+                // bakes it into the body string. We remove the member from
+                // _roomMemberList in this same handler, so a render-time
+                // lookup would lose them — and their nick is never going
+                // to update again once they've left, so there's no value
+                // in keeping the structured form around either.
+                val prefix = event.memberHash.toHex().take(12)
+                val parterNick = _roomMemberList.value[event.room]
+                    ?.firstOrNull { it.hashPrefix == prefix }?.nick
                 val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
+                val actor = parterNick ?: shortHash
                 addMessage(event.room, ChatMessage(
                     nick = null,
-                    body = "$shortHash left",
+                    body = "$actor left",
                     src = null,
                     isNotice = true,
                 ))
@@ -1286,7 +1335,6 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 val current = counts[event.room] ?: 0
                 if (current > 0) counts[event.room] = current - 1
                 _roomMemberCounts.value = counts
-                val prefix = event.memberHash.toHex().take(12)
                 val memberList = _roomMemberList.value.toMutableMap()
                 memberList[event.room]?.let { list ->
                     memberList[event.room] = list.filterNot { it.hashPrefix == prefix }

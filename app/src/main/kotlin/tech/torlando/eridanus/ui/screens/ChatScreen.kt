@@ -202,7 +202,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(roomMessages) { message ->
-                    MessageItem(message)
+                    MessageItem(message, members)
                 }
             }
 
@@ -406,14 +406,29 @@ private fun ByteArray.toColorKey(): String =
     take(6).joinToString("") { "%02x".format(it) }
 
 @Composable
-private fun MessageItem(message: ChatMessage) {
+private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val time = timeFormat.format(Date(message.timestamp))
 
     when {
         message.isNotice -> {
+            // Structured join notices (memberHash present, body = "joined")
+            // resolve the actor here from the *current* member list so the
+            // notice gains the joiner's nick the moment we learn it via
+            // /who or their first message. Part notices and free-text
+            // notices set memberHash = null and bake the full text into
+            // body upstream.
+            val body = if (message.memberHash != null) {
+                val prefix = message.memberHash.joinToString("") { "%02x".format(it) }.take(12)
+                val nick = members.firstOrNull { it.hashPrefix == prefix }?.nick
+                val actor = nick
+                    ?: message.memberHash.take(6).joinToString("") { "%02x".format(it) }
+                "$actor ${message.body}"
+            } else {
+                message.body
+            }
             Text(
-                text = "-- $time ${message.body}",
+                text = "-- $time $body",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontStyle = FontStyle.Italic,
