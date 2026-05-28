@@ -54,8 +54,11 @@ sealed class RrcEvent {
     data class ErrorReceived(val room: String?, val text: String) : RrcEvent()
     data class Joined(val room: String, val members: List<ByteArray>?) : RrcEvent()
     data class Parted(val room: String) : RrcEvent()
-    data class MemberJoined(val room: String, val memberHash: ByteArray) : RrcEvent()
-    data class MemberParted(val room: String, val memberHash: ByteArray) : RrcEvent()
+    // nick is the advisory K_NICK the hub attaches to the JOINED/PARTED
+    // fanout (rrcd 0.3.2+, and Eridanus's own hub). null when the hub
+    // doesn't send it (older hubs) — the UI falls back to a short hash.
+    data class MemberJoined(val room: String, val memberHash: ByteArray, val nick: String?) : RrcEvent()
+    data class MemberParted(val room: String, val memberHash: ByteArray, val nick: String?) : RrcEvent()
     data object Disconnected : RrcEvent()
     data class ConnectionFailed(val reason: String) : RrcEvent()
 }
@@ -394,10 +397,13 @@ class RrcClient(
                     body.filterIsInstance<ByteArray>()
                 } else null
                 if (room in _joinedRooms) {
-                    // Already in this room — someone else joined
+                    // Already in this room — someone else joined. The hub
+                    // (rrcd 0.3.2+ / Eridanus's own) attaches the joiner's
+                    // advisory nick as K_NICK on this single-joiner fanout.
                     val joinerHash = members?.firstOrNull()
                     if (joinerHash != null) {
-                        _events.tryEmit(RrcEvent.MemberJoined(room, joinerHash))
+                        val nick = env[K_NICK] as? String
+                        _events.tryEmit(RrcEvent.MemberJoined(room, joinerHash, nick))
                     }
                 } else {
                     _joinedRooms.add(room)
@@ -416,7 +422,11 @@ class RrcClient(
                     _joinedRooms.remove(room)
                     _events.tryEmit(RrcEvent.Parted(room))
                 } else {
-                    _events.tryEmit(RrcEvent.MemberParted(room, partedHash))
+                    // Advisory K_NICK on the PARTED fanout (rrcd 0.3.2+ /
+                    // Eridanus's own hub) lets us render "<nick> left" even
+                    // if we never had the parter in our member list.
+                    val nick = env[K_NICK] as? String
+                    _events.tryEmit(RrcEvent.MemberParted(room, partedHash, nick))
                 }
             }
 

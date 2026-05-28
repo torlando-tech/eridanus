@@ -1262,14 +1262,10 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 }
                 // Parse topic notices
                 parseTopicNotice(event.body)
-                // /who responses are consumed silently — they update
-                // _roomMemberList (driving the member sheet and the
-                // structured join-notice render path) and the inline
-                // 'members in #room: ...' line is redundant with the
-                // sheet. The auto-/who fired from MemberJoined would
-                // otherwise put one of these in the chat scrollback for
-                // every peer join.
-                if (parseMembersNotice(event.body)) return
+                // Parse /who response for member list/count. This also
+                // displays the "members in #room: ..." line inline (below),
+                // which is the user-visible result of a manual /who.
+                parseMembersNotice(event.body)
 
                 val room = event.room ?: _currentRoom.value ?: return
                 addMessage(room, ChatMessage(
@@ -1292,11 +1288,14 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
             is RrcEvent.MemberJoined -> {
                 // Body holds just the verb; MessageItem prepends the actor
-                // (current nick if known, short hash otherwise) by looking
-                // memberHash up in the room's member list at render time.
-                // This way the notice shows the hash initially (T_JOINED
-                // carries no nick) and retroactively updates to the nick
-                // once we learn it.
+                // by looking memberHash up in the room's member list at
+                // render time. Seeding the advisory nick (event.nick, from
+                // the hub's K_NICK on the JOINED fanout) into the list below
+                // makes the notice render "<nick> joined" on first paint.
+                // When the hub doesn't send a nick (older hub), it stays a
+                // short hash until we learn the nick from the joiner's first
+                // message (MessageReceived backfill) — the notice re-renders
+                // then, since it resolves the member list at display time.
                 addMessage(event.room, ChatMessage(
                     nick = null,
                     body = "joined",
@@ -1307,26 +1306,18 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 val counts = _roomMemberCounts.value.toMutableMap()
                 counts[event.room] = (counts[event.room] ?: 0) + 1
                 _roomMemberCounts.value = counts
-                // Keep the member list in step with the count (nick filled
-                // in by the auto-/who below or the joiner's first message —
-                // see the MessageReceived handler).
                 val prefix = event.memberHash.toHex().take(12)
                 val memberList = _roomMemberList.value.toMutableMap()
                 val existing = memberList[event.room] ?: emptyList()
-                if (existing.none { it.hashPrefix == prefix }) {
-                    memberList[event.room] = existing + RoomMember(nick = null, hashPrefix = prefix)
+                val idx = existing.indexOfFirst { it.hashPrefix == prefix }
+                if (idx < 0) {
+                    memberList[event.room] = existing + RoomMember(nick = event.nick, hashPrefix = prefix)
                     _roomMemberList.value = memberList
-                }
-                // Auto-/who so the joiner's nick resolves in ~1 RTT
-                // instead of waiting for them to speak. The 'members in
-                // #room' response is consumed silently in NoticeReceived
-                // — it lands in _roomMemberList and the structured join
-                // notice above re-renders with the joiner's nick on the
-                // next recomposition.
-                viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        rrcClient?.sendCommand("/who ${event.room}", room = event.room)
-                    } catch (_: Exception) {}
+                } else if (!event.nick.isNullOrEmpty() && existing[idx].nick != event.nick) {
+                    memberList[event.room] = existing.toMutableList().also {
+                        it[idx] = it[idx].copy(nick = event.nick)
+                    }
+                    _roomMemberList.value = memberList
                 }
             }
 
@@ -1337,11 +1328,14 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 // lookup would lose them — and their nick is never going
                 // to update again once they've left, so there's no value
                 // in keeping the structured form around either.
+                // Prefer the advisory nick the hub attaches to the PARTED
+                // fanout (event.nick), then a nick we already had cached,
+                // then the short hash.
                 val prefix = event.memberHash.toHex().take(12)
-                val parterNick = _roomMemberList.value[event.room]
+                val knownNick = _roomMemberList.value[event.room]
                     ?.firstOrNull { it.hashPrefix == prefix }?.nick
                 val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
-                val actor = parterNick ?: shortHash
+                val actor = event.nick?.takeIf { it.isNotEmpty() } ?: knownNick ?: shortHash
                 addMessage(event.room, ChatMessage(
                     nick = null,
                     body = "$actor left",
