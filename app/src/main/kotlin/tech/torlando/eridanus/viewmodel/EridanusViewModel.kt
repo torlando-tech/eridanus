@@ -12,6 +12,8 @@ import co.nstant.`in`.cbor.model.UnicodeString
 import co.nstant.`in`.cbor.model.UnsignedInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,12 +22,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import tech.torlando.eridanus.EridanusApp
 import tech.torlando.eridanus.rns.RnsAnnounceHandler
 import tech.torlando.eridanus.rns.RnsAnnounceHandlerRegistration
@@ -96,6 +100,30 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         // racy intermediate state if it happens the same instant the
         // service flips its flag.
         private const val POST_RESTART_SETTLE_MS = 300L
+
+        // How long [establishHubConnection] waits for the hub's WELCOME
+        // before declaring the attempt failed. Mirrors the 30s ceiling the
+        // original fire-and-forget connect path used.
+        private const val HUB_CONNECT_TIMEOUT_MS = 30_000L
+
+        // Auto-reconnect backoff: first retry after BASE, doubling up to MAX.
+        // The loop runs as long as the user still intends to be connected
+        // (see [reconnectHubHash] / [intentionalDisconnect]), so a slow
+        // shared-instance host restart just means a few extra cycles.
+        private const val RECONNECT_BASE_DELAY_MS = 2_000L
+        private const val RECONNECT_MAX_DELAY_MS = 30_000L
+
+        // While waiting for the shared-instance host to come back during a
+        // reconnect, poll its presence on this cadence. Tighter than the
+        // 10s watchdog so recovery feels responsive once we already know the
+        // link dropped.
+        private const val RECONNECT_SHARED_INSTANCE_POLL_MS = 1_000L
+
+        // Upper bound on how long [awaitSharedInstance] blocks before
+        // attempting the hub connect anyway. The python LocalClientInterface
+        // can silently self-heal its socket without our attach flag ever
+        // flipping, so we must not wait on the flag forever.
+        private const val RECONNECT_SHARED_INSTANCE_MAX_WAIT_MS = 30_000L
     }
 
     private val backend: RnsBackend = (application as EridanusApp).rnsBackend
@@ -149,6 +177,32 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     private var rrcClient: RrcClient? = null
     private val _clientState = MutableStateFlow(tech.torlando.eridanus.rrc.ClientState.DISCONNECTED)
     val clientState: StateFlow<tech.torlando.eridanus.rrc.ClientState> = _clientState
+
+    // ── Hub auto-reconnect intent ──────────────────────────────────────
+    // The hub link is bound to the backend's Reticulum instance. When the
+    // shared-instance host (Sideband / Columba / rnsd) restarts, RNS runs
+    // Transport.shared_connection_disappeared(), which tears down every
+    // active link — our hub link included — and the closedCallback fires
+    // RrcEvent.Disconnected. Nothing rebuilds that link on its own, so the
+    // user silently falls out of the hub and every room. These fields let
+    // [scheduleHubReconnect] re-establish the session transparently:
+    //
+    // - reconnectHubHash: the hub to reconnect to. Set on connectToHub,
+    //   cleared on user-driven disconnect/shutdown. Non-null == "the user
+    //   wants to be connected", which is what distinguishes a dropped link
+    //   (reconnect) from a deliberate leave (don't).
+    // - intentionalDisconnect: guards the brief window where we tear the
+    //   link down ourselves (disconnect/shutdown/identity swap) and the
+    //   resulting Disconnected event must NOT trigger a reconnect.
+    // - sessionRoomKeys: room (lowercased) -> +k key, so keyed rooms can be
+    //   silently re-joined. In-memory only, for the session's lifetime.
+    // - reconnectJob: the single in-flight reconnect loop (guarded so a
+    //   flurry of Disconnected events can't spawn duplicates).
+    private var reconnectHubHash: ByteArray? = null
+    @Volatile private var intentionalDisconnect = false
+    private val sessionRoomKeys = mutableMapOf<String, String?>()
+    private var roomsToRejoin: List<String> = emptyList()
+    private var reconnectJob: Job? = null
 
     private val _connectedHubName = MutableStateFlow<String?>(null)
     val connectedHubName: StateFlow<String?> = _connectedHubName
@@ -430,7 +484,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
                 // RrcClient was constructed bound to the old identity. Tear
                 // it down so any subsequent connectToHub() builds a fresh
-                // client with the new identity.
+                // client with the new identity. Clear the reconnect intent
+                // too — we don't want an armed auto-reconnect silently
+                // re-attaching the old session under the new identity.
+                intentionalDisconnect = true
+                reconnectHubHash = null
+                reconnectJob?.cancel()
+                reconnectJob = null
+                sessionRoomKeys.clear()
+                roomsToRejoin = emptyList()
                 clientEventJob?.cancel()
                 rrcClient?.disconnect()
                 rrcClient = null
@@ -492,6 +554,17 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             if (connected) {
                 _wasConnectedToSharedInstance.value = false
                 registerAnnounceHandler()
+                // A backend restart re-attaches transport but leaves the hub
+                // link dead. If the user still intends to be connected and we
+                // aren't already (re)connecting, drive a reconnect now. This
+                // covers the case where the link died without firing a
+                // closedCallback (so no Disconnected event armed the loop)
+                // and the watchdog-triggered restart is the first signal.
+                if (reconnectHubHash != null && !intentionalDisconnect &&
+                    _clientState.value != tech.torlando.eridanus.rrc.ClientState.ACTIVE
+                ) {
+                    scheduleHubReconnect()
+                }
             }
             Log.i(TAG, "Reticulum restart complete (shared instance: $connected)")
         } catch (e: Exception) {
@@ -650,6 +723,16 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 watchdogJob?.cancel()
                 watchdogJob = null
 
+                // Clear the reconnect intent and kill any in-flight
+                // reconnect loop so the link teardown below can't trigger a
+                // doomed auto-reconnect against the dying backend.
+                intentionalDisconnect = true
+                reconnectHubHash = null
+                reconnectJob?.cancel()
+                reconnectJob = null
+                sessionRoomKeys.clear()
+                roomsToRejoin = emptyList()
+
                 // Drop the hub link and any hosted hub before the service
                 // dies, so each end has a chance to send its close packet
                 // rather than just vanishing on the wire.
@@ -770,40 +853,182 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun connectToHub(hubHash: ByteArray) {
-        val id = clientIdentity ?: return
-        _connectionError.value = null
-        clientEventJob?.cancel()
+        if (clientIdentity == null) return
+        // Fresh user-driven connect: (re)arm the reconnect intent and drop
+        // any stale rejoin state from a previous hub.
+        intentionalDisconnect = false
+        reconnectHubHash = hubHash.copyOf()
+        sessionRoomKeys.clear()
+        roomsToRejoin = emptyList()
+        val prevReconnect = reconnectJob
+        reconnectJob = null
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
-                rrcClient = client
-                _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
+            // Fully stop any in-flight auto-reconnect loop before we build
+            // the new connection, so the two don't race over rrcClient.
+            prevReconnect?.cancelAndJoin()
+            establishHubConnection(hubHash)
+        }
+    }
 
-                // Collect events
-                clientEventJob = launch {
-                    client.events.collect { event ->
-                        handleRrcEvent(event)
-                    }
+    /**
+     * Build a fresh [RrcClient], connect it to [hubHash], and suspend until
+     * the hub sends WELCOME (state ACTIVE) or the attempt fails / times out.
+     * Returns true only on a fully established session. Shared by the
+     * user-driven [connectToHub] and the [scheduleHubReconnect] loop so both
+     * paths have identical setup/teardown semantics.
+     */
+    private suspend fun establishHubConnection(hubHash: ByteArray): Boolean {
+        val id = clientIdentity ?: return false
+        _connectionError.value = null
+        // Stop collecting the old client's events and tear its (dead) link
+        // down before replacing it, so a stale closedCallback can't race the
+        // new connection's state. cancelAndJoin (not bare cancel) so no
+        // buffered Disconnected from the old client lands after we proceed
+        // and spuriously arms a second reconnect loop.
+        clientEventJob?.cancelAndJoin()
+        rrcClient?.disconnect()
+
+        val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
+        rrcClient = client
+        _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
+        clientEventJob = viewModelScope.launch(Dispatchers.IO) {
+            client.events.collect { event -> handleRrcEvent(event) }
+        }
+
+        return try {
+            // connect() blocks on path lookup (~up to 17s) then establishes
+            // the link asynchronously; WELCOME arrives as a packet and the
+            // event handler flips us to ACTIVE. A failure emits
+            // ConnectionFailed, whose handler flips us to DISCONNECTED.
+            client.connect(hubHash)
+            val outcome = withTimeoutOrNull(HUB_CONNECT_TIMEOUT_MS) {
+                clientState.first {
+                    it == tech.torlando.eridanus.rrc.ClientState.ACTIVE ||
+                        it == tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
                 }
-
-                client.connect(hubHash)
-
-                // Connection timeout: if still not ACTIVE after 30s, give up
-                launch {
-                    delay(30_000)
-                    if (_clientState.value == tech.torlando.eridanus.rrc.ClientState.CONNECTING ||
-                        _clientState.value == tech.torlando.eridanus.rrc.ClientState.AWAITING_WELCOME
-                    ) {
-                        Log.w(TAG, "Connection timed out after 30s")
-                        client.disconnect()
-                        rrcClient = null
-                        _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+            }
+            if (outcome == tech.torlando.eridanus.rrc.ClientState.ACTIVE) {
+                true
+            } else {
+                // Timed out still in CONNECTING/AWAITING_WELCOME (outcome
+                // null), or a failure event already moved us to DISCONNECTED.
+                if (_clientState.value != tech.torlando.eridanus.rrc.ClientState.ACTIVE) {
+                    client.disconnect()
+                    if (rrcClient === client) rrcClient = null
+                    _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                    if (_connectionError.value == null) {
                         _connectionError.value = "Connection timed out"
                     }
                 }
+                false
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to connect to hub", e)
+            _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+            false
+        }
+    }
+
+    /**
+     * Re-establish the hub link (and re-join the rooms we were in) after an
+     * unexpected drop — typically the shared-instance host restarting under
+     * us. Single-flight: a second Disconnected event while a loop is already
+     * running is a no-op. Runs with exponential backoff for as long as the
+     * user still intends to be connected; [disconnectFromHub] /
+     * [fullShutdown] clear that intent and cancel the loop.
+     */
+    private fun scheduleHubReconnect() {
+        if (intentionalDisconnect) return
+        if (reconnectJob?.isActive == true) return
+        val hubHash = reconnectHubHash ?: return
+        reconnectJob = viewModelScope.launch(Dispatchers.IO) {
+            var attempt = 0
+            while (isActive && !intentionalDisconnect && reconnectHubHash != null) {
+                // Don't bother trying to build a link until transport is
+                // actually back — otherwise every attempt burns the full
+                // path-lookup timeout failing.
+                awaitSharedInstance()
+                if (!isActive || intentionalDisconnect) break
+
+                attempt++
+                Log.i(TAG, "Hub auto-reconnect: attempt $attempt")
+                val ok = establishHubConnection(hubHash)
+                if (ok) {
+                    Log.i(
+                        TAG,
+                        "Hub auto-reconnect: re-established after $attempt attempt(s); " +
+                            "rejoining ${roomsToRejoin.size} room(s)",
+                    )
+                    rejoinRooms()
+                    return@launch
+                }
+                if (intentionalDisconnect) break
+
+                // 2s, 4s, 8s, 16s, then capped at 30s.
+                val backoff = (RECONNECT_BASE_DELAY_MS shl (attempt - 1).coerceAtMost(4))
+                    .coerceAtMost(RECONNECT_MAX_DELAY_MS)
+                Log.i(TAG, "Hub auto-reconnect: attempt $attempt failed, retrying in ${backoff}ms")
+                delay(backoff)
+            }
+            Log.i(TAG, "Hub auto-reconnect: loop ended (intentional=$intentionalDisconnect)")
+        }
+    }
+
+    /**
+     * Block until the shared-instance host is back (or a bounded ceiling
+     * elapses). If the host is up but our attach flag says we're detached —
+     * the watchdog hasn't caught it yet — nudge a [restartBackend] so we
+     * re-attach promptly instead of waiting out the 10s watchdog cadence.
+     *
+     * Bounded so we still attempt the connect even when the attach flag
+     * never flips (the python LocalClientInterface can self-heal its socket
+     * silently); a failed attempt just backs off and tries again.
+     */
+    private suspend fun awaitSharedInstance() {
+        if (_connectedToSharedInstance.value) return
+        val deadline = RECONNECT_SHARED_INSTANCE_MAX_WAIT_MS / RECONNECT_SHARED_INSTANCE_POLL_MS
+        var ticks = 0L
+        while (currentCoroutineContext().isActive && !intentionalDisconnect &&
+            !_connectedToSharedInstance.value
+        ) {
+            val hostUp = try {
+                backend.isSharedInstanceRunning()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to connect to hub", e)
-                _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                false
+            }
+            if (hostUp && !_isRestarting.value) {
+                // Host is bound but we're not attached — re-run the attach
+                // probe. restartBackend() is mutex-guarded, so this can't
+                // collide with a concurrent watchdog restart.
+                restartBackend()
+                if (_connectedToSharedInstance.value) return
+            }
+            if (++ticks >= deadline) return
+            delay(RECONNECT_SHARED_INSTANCE_POLL_MS)
+        }
+    }
+
+    /**
+     * Silently re-join every room we were in before the drop, using the
+     * keys captured in [sessionRoomKeys] for +k rooms. Best-effort: a room
+     * that now rejects us (banned, bad key) just stays un-joined.
+     */
+    private fun rejoinRooms() {
+        val rooms = roomsToRejoin
+        if (rooms.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            for (room in rooms) {
+                if (intentionalDisconnect) break
+                try {
+                    rrcClient?.join(room, key = sessionRoomKeys[room])
+                    // Gentle pacing so a multi-room rejoin doesn't burst the
+                    // freshly re-established link.
+                    delay(150)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Rejoin failed for #$room: ${e.message}")
+                }
             }
         }
     }
@@ -813,6 +1038,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun disconnectFromHub() {
+        // User-driven leave: clear the reconnect intent and kill any
+        // in-flight reconnect loop so the Disconnected event below doesn't
+        // bounce us straight back in.
+        intentionalDisconnect = true
+        reconnectHubHash = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        sessionRoomKeys.clear()
+        roomsToRejoin = emptyList()
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             rrcClient?.disconnect()
@@ -832,9 +1066,14 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun joinRoom(room: String, key: String? = null) {
+        val r = room.trim().lowercase()
+        // Remember the key (if any) so an auto-reconnect can silently
+        // re-join this room. Keyed by the lowercased name to match the
+        // form the JOINED fanout reports back in _joinedRooms.
+        sessionRoomKeys[r] = key?.ifEmpty { null }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                rrcClient?.join(room, key = key?.ifEmpty { null })
+                rrcClient?.join(r, key = key?.ifEmpty { null })
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to join room", e)
             }
@@ -842,9 +1081,13 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun partRoom(room: String) {
+        val r = room.trim().lowercase()
+        // Deliberate leave: drop the rejoin intent for this room so a later
+        // reconnect doesn't drag the user back into a room they left.
+        sessionRoomKeys.remove(r)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                rrcClient?.part(room)
+                rrcClient?.part(r)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to part room", e)
             }
@@ -1013,6 +1256,16 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
         Log.i(TAG, "connectToOwnHub: wiring in-process loopback to local hub")
         _connectionError.value = null
+        // Disarm any remote-hub auto-reconnect intent left over from a prior
+        // session. The own-hub link is an in-process loopback with its own
+        // lifecycle (tied to the hosted hub), so it must not fall into the
+        // remote reconnect loop — otherwise a loopback teardown would try to
+        // re-attach to whatever remote hub we last visited.
+        reconnectHubHash = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        sessionRoomKeys.clear()
+        roomsToRejoin = emptyList()
         clientEventJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1354,15 +1607,39 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             }
 
             is RrcEvent.Disconnected -> {
-                Log.i(TAG, "Disconnected event received, clearing rooms")
-                _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
-                _connectedHubName.value = null
-                _joinedRooms.value = emptySet()
-                _availableRooms.value = emptyList()
-                _roomTopics.value = emptyMap()
-                _roomMemberCounts.value = emptyMap()
-                _roomMemberList.value = emptyMap()
-                _hubGreetingMessage.value = null
+                val willReconnect = !intentionalDisconnect && reconnectHubHash != null
+                if (willReconnect) {
+                    // Unexpected drop (shared-instance host restarted, link
+                    // torn down). Remember the rooms so we can re-join them,
+                    // but DON'T wipe _joinedRooms / _currentRoom / _messages
+                    // — keeping them avoids a flicker, the rejoin is
+                    // idempotent against the list, and it means _joinedRooms
+                    // still reflects the live set on a re-drop mid-reconnect.
+                    // Show CONNECTING so the UI reads as "reconnecting"
+                    // rather than dead.
+                    roomsToRejoin = _joinedRooms.value.toList()
+                    Log.i(
+                        TAG,
+                        "Link dropped; scheduling auto-reconnect " +
+                            "(${roomsToRejoin.size} room(s) to rejoin)",
+                    )
+                    _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
+                    // Member rosters are stale until we re-handshake; clear
+                    // them so we don't show ghosts during the gap.
+                    _roomMemberCounts.value = emptyMap()
+                    _roomMemberList.value = emptyMap()
+                    scheduleHubReconnect()
+                } else {
+                    Log.i(TAG, "Disconnected event received, clearing rooms")
+                    _clientState.value = tech.torlando.eridanus.rrc.ClientState.DISCONNECTED
+                    _connectedHubName.value = null
+                    _joinedRooms.value = emptySet()
+                    _availableRooms.value = emptyList()
+                    _roomTopics.value = emptyMap()
+                    _roomMemberCounts.value = emptyMap()
+                    _roomMemberList.value = emptyMap()
+                    _hubGreetingMessage.value = null
+                }
             }
 
             is RrcEvent.ConnectionFailed -> {
