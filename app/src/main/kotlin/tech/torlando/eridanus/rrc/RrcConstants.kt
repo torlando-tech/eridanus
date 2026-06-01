@@ -26,6 +26,7 @@ object RrcConstants {
 
     const val T_MSG = 20
     const val T_NOTICE = 21
+    const val T_ACTION = 22
 
     const val T_PING = 30
     const val T_PONG = 31
@@ -68,6 +69,7 @@ object RrcConstants {
 
     // HELLO capabilities
     const val CAP_RESOURCE_ENVELOPE = 0
+    const val CAP_ACTION = 1
 
     // Invite TTL (milliseconds)
     const val DEFAULT_INVITE_TTL_MS = 900_000L  // 15 minutes

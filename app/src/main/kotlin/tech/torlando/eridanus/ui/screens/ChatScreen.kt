@@ -82,6 +82,7 @@ private val COMMANDS = listOf(
     CommandSuggestion("/topic", "/topic [text]", "View or set room topic"),
     CommandSuggestion("/who", "/who", "List room members"),
     CommandSuggestion("/nick", "/nick <name>", "Change your nickname"),
+    CommandSuggestion("/me", "/me <action>", "Send an action/emote"),
     CommandSuggestion("/kick", "/kick <user>", "Kick a user"),
     CommandSuggestion("/ban", "/ban add|del|list [user]", "Manage bans"),
     CommandSuggestion("/op", "/op <user>", "Grant operator status"),
@@ -443,6 +444,28 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
                 fontStyle = FontStyle.Italic,
                 modifier = Modifier.padding(vertical = 2.dp),
             )
+        }
+        message.isAction -> {
+            // IRC-style emote: "* nick does something". The actor is colored
+            // with the same per-user color used for normal messages so the
+            // speaker stays recognizable; the action text is italicized.
+            val actor = message.nick ?: message.src?.toColorKey() ?: "???"
+            Row(
+                modifier = Modifier.padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = time,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "* $actor ${message.body}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = usernameColor(message.src?.toColorKey() ?: message.nick.orEmpty()),
+                )
+            }
         }
         else -> {
             Row(
