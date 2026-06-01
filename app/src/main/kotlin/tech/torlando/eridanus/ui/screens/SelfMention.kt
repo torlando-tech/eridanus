@@ -19,10 +19,15 @@ package tech.torlando.eridanus.ui.screens
 internal fun selfMentionRanges(text: String, nick: String): List<IntRange> {
     val trimmed = nick.trim()
     if (trimmed.isEmpty()) return emptyList()
+    // (?U)       — UNICODE_CHARACTER_CLASS: makes \w cover non-ASCII word chars
+    //              too (it's ASCII-only by default), so the guards below also
+    //              reject accented neighbours — e.g. "@bobé" for nick "bob", or
+    //              "ý@bob". Kotlin's RegexOption has no equivalent, so it's set
+    //              as an embedded flag passed through to java.util.regex.
     // (?<![\w@]) — '@' isn't preceded by a word char (email) or another '@'.
     // (?!\w)     — the name isn't immediately followed by more word chars.
     val pattern = Regex(
-        "(?<![\\w@])@" + Regex.escape(trimmed) + "(?!\\w)",
+        "(?U)(?<![\\w@])@" + Regex.escape(trimmed) + "(?!\\w)",
         RegexOption.IGNORE_CASE,
     )
     return pattern.findAll(text).map { it.range }.toList()

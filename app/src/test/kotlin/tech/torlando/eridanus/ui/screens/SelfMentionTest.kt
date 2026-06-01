@@ -60,6 +60,24 @@ class SelfMentionTest {
     }
 
     @Test
+    fun trailingNonAsciiWordCharBlocksMatch() {
+        // 'é' is a Unicode word char, so "@bobé" is not a mention of "bob".
+        assertEquals(emptyList<IntRange>(), selfMentionRanges("@bobé", "bob"))
+    }
+
+    @Test
+    fun leadingNonAsciiWordCharBlocksMatch() {
+        // '@' preceded by the word char 'ý' (email-like) is not a mention.
+        assertEquals(emptyList<IntRange>(), selfMentionRanges("ý@bob", "bob"))
+    }
+
+    @Test
+    fun matchesAccentedNick() {
+        // Accented nicks match themselves; trailing '!' is a boundary.
+        assertEquals(listOf(4..8), selfMentionRanges("hey @josé!", "josé"))
+    }
+
+    @Test
     fun blankNickMatchesNothing() {
         assertEquals(emptyList<IntRange>(), selfMentionRanges("@bob hi", ""))
         assertEquals(emptyList<IntRange>(), selfMentionRanges("@bob hi", "   "))
