@@ -52,6 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -297,6 +303,13 @@ fun ChatScreen(
                 }
             }
 
+            val sendCurrent = {
+                if (inputText.isNotBlank()) {
+                    viewModel.sendInput(inputText.trim())
+                    inputField = TextFieldValue()
+                }
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -307,17 +320,31 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = inputField,
                     onValueChange = { inputField = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        // Enter sends; Shift+Enter falls through to insert a
+                        // newline. Hardware/desktop keyboards (e.g. Waydroid)
+                        // emit a real Enter key here; soft keyboards usually
+                        // surface a newline button instead, which still works.
+                        // Consume only the bare-Enter KeyDown so the newline
+                        // isn't also inserted, and so the matching KeyUp
+                        // doesn't fire a second send.
+                        .onPreviewKeyEvent { event ->
+                            val isEnter = event.key == Key.Enter || event.key == Key.NumPadEnter
+                            if (isEnter && !event.isShiftPressed) {
+                                if (event.type == KeyEventType.KeyDown) sendCurrent()
+                                true
+                            } else {
+                                false
+                            }
+                        },
                     placeholder = { Text("Message #${currentRoom ?: ""}") },
-                    singleLine = true,
+                    // Multi-line so Shift+Enter can insert a newline; capped so
+                    // a long draft doesn't crowd out the message list.
+                    maxLines = 6,
                 )
                 IconButton(
-                    onClick = {
-                        if (inputText.isNotBlank()) {
-                            viewModel.sendInput(inputText.trim())
-                            inputField = TextFieldValue()
-                        }
-                    },
+                    onClick = sendCurrent,
                     enabled = inputText.isNotBlank(),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
