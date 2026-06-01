@@ -54,6 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -322,16 +325,21 @@ fun ChatScreen(
                     onValueChange = { inputField = it },
                     modifier = Modifier
                         .weight(1f)
-                        // Enter sends; Shift+Enter falls through to insert a
-                        // newline. Hardware/desktop keyboards (e.g. Waydroid)
+                        // Bare Enter sends; Shift+Enter falls through to insert
+                        // a newline. Hardware/desktop keyboards (e.g. Waydroid)
                         // emit a real Enter key here; soft keyboards usually
                         // surface a newline button instead, which still works.
+                        // Require a *bare* Enter — Ctrl/Alt/Meta+Enter are
+                        // common OS/WM shortcuts on desktop Linux/Waydroid, so
+                        // leave those un-consumed rather than stealing them.
                         // Consume only the bare-Enter KeyDown so the newline
                         // isn't also inserted, and so the matching KeyUp
                         // doesn't fire a second send.
                         .onPreviewKeyEvent { event ->
                             val isEnter = event.key == Key.Enter || event.key == Key.NumPadEnter
-                            if (isEnter && !event.isShiftPressed) {
+                            val isBareEnter = isEnter && !event.isShiftPressed &&
+                                !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+                            if (isBareEnter) {
                                 if (event.type == KeyEventType.KeyDown) sendCurrent()
                                 true
                             } else {
