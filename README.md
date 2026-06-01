@@ -47,3 +47,7 @@ Eridanus is a [constellation](https://en.wikipedia.org/wiki/Eridanus_(constellat
 Eridanus's own source code is licensed under the [Mozilla Public License 2.0](LICENSE).
 
 Eridanus ships in two build flavors that bundle different Reticulum implementations under different downstream terms; the kotlin flavor bundles MPL-2.0 [reticulum-kt](https://github.com/torlando-tech/reticulum-kt); the python flavor bundles the upstream Python Reticulum under the Reticulum License, which adds field-of-use restrictions. See [NOTICE](NOTICE) for the full breakdown before redistributing a build.
+
+## AI Development
+
+This app has been made with AI assistance, almost exclusively Claude Opus via Claude Code. I am a software egineer by profession, but not in the mobile app space. The python backend build uses Mark Qvist's reference Reticulum implementation for all network communicati. The kotlin backend uses my own experimental Reticulum implementation, also heavily AI assisted. The kotlin backend has a smaller APK and may or may not improve your battery life while using Eridanus. 
