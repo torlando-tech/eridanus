@@ -3,6 +3,7 @@
 package tech.torlando.eridanus.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -74,6 +76,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.ui.theme.usernameColor
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
@@ -116,6 +119,7 @@ fun ChatScreen(
     val roomTopics by viewModel.roomTopics.collectAsState()
     val roomMemberCounts by viewModel.roomMemberCounts.collectAsState()
     val roomMemberList by viewModel.roomMemberList.collectAsState()
+    val selfNick by viewModel.nickname.collectAsState()
     val topic = currentRoom?.let { roomTopics[it] }
     val memberCount = currentRoom?.let { roomMemberCounts[it] }
     val members = currentRoom?.let { roomMemberList[it] } ?: emptyList()
@@ -212,7 +216,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(roomMessages) { message ->
-                    MessageItem(message, members)
+                    MessageItem(message, members, selfNick)
                 }
             }
 
@@ -465,7 +469,7 @@ private fun ByteArray.toColorKey(): String =
     take(6).joinToString("") { "%02x".format(it) }
 
 @Composable
-private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
+private fun MessageItem(message: ChatMessage, members: List<RoomMember>, selfNick: String) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val time = timeFormat.format(Date(message.timestamp))
 
@@ -526,8 +530,25 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
             }
         }
         else -> {
+            // Highlight @-mentions of the local user's own nick: the token gets
+            // a tinted chip and the whole row a subtle tint so messages aimed at
+            // you are easy to spot when scanning the timeline.
+            val mentionRanges = remember(message.body, selfNick) {
+                selfMentionRanges(message.body, selfNick)
+            }
+            val rowModifier = if (mentionRanges.isNotEmpty()) {
+                Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f),
+                        RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+            } else {
+                Modifier.padding(vertical = 2.dp)
+            }
             Row(
-                modifier = Modifier.padding(vertical = 2.dp),
+                modifier = rowModifier,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
@@ -547,6 +568,7 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
                 LinkifiedText(
                     text = message.body,
                     style = MaterialTheme.typography.bodyMedium,
+                    mentionRanges = mentionRanges,
                 )
             }
         }
@@ -555,8 +577,9 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
 
 /**
  * Message body text that (a) is selectable so the user can copy it (handy
- * for grabbing a pasted URL) and (b) renders any http(s) links as tappable,
- * underlined primary-colored spans that open in the system browser.
+ * for grabbing a pasted URL), (b) renders any http(s) links as tappable,
+ * underlined primary-colored spans that open in the system browser, and
+ * (c) renders self-mentions ([mentionRanges]) as a tinted chip.
  *
  * Tappable links and text selection coexisting in one [Text] is a Compose
  * 1.7 capability ([LinkAnnotation] inside a [SelectionContainer]); on 1.6
@@ -566,9 +589,19 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>) {
 private fun LinkifiedText(
     text: String,
     style: TextStyle,
+    mentionRanges: List<IntRange> = emptyList(),
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
-    val annotated = remember(text, linkColor) { linkifyUrls(text, linkColor) }
+    val mentionBg = MaterialTheme.colorScheme.tertiaryContainer
+    val mentionFg = MaterialTheme.colorScheme.onTertiaryContainer
+    val annotated = remember(text, linkColor, mentionRanges, mentionBg, mentionFg) {
+        val mentionStyle = SpanStyle(
+            background = mentionBg,
+            color = mentionFg,
+            fontWeight = FontWeight.Medium,
+        )
+        buildMessageBody(text, linkColor, mentionRanges, mentionStyle)
+    }
     SelectionContainer {
         // LinkAnnotation.Url with no explicit listener routes taps through
         // the LocalUriHandler, which opens the platform browser.
@@ -582,28 +615,56 @@ private val URL_REGEX = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
 private const val URL_TRAILING_TRIM = ".,;:!?)]}\"'"
 
 /**
- * Build an [AnnotatedString] where each http(s) URL in [text] becomes a
- * tappable [LinkAnnotation.Url] styled with [linkColor] + underline. Returns
- * a plain string when there are no links.
+ * Build an [AnnotatedString] for a message body, interleaving two kinds of
+ * styled run in a single left-to-right pass:
+ * - each http(s) URL becomes a tappable [LinkAnnotation.Url] (underlined,
+ *   [linkColor]); trailing punctuation grabbed by the match stays plain text;
+ * - each range in [mentionRanges] is styled with [mentionStyle].
+ *
+ * A mention overlapping a URL is dropped (the URL wins, since it's tappable).
+ * Returns a plain string when there's nothing to style.
  */
-private fun linkifyUrls(text: String, linkColor: Color): AnnotatedString {
-    val matches = URL_REGEX.findAll(text).toList()
-    if (matches.isEmpty()) return AnnotatedString(text)
+private fun buildMessageBody(
+    text: String,
+    linkColor: Color,
+    mentionRanges: List<IntRange>,
+    mentionStyle: SpanStyle,
+): AnnotatedString {
+    val urlMatches = URL_REGEX.findAll(text).toList()
+    val mentions = mentionRanges.filter { mr ->
+        urlMatches.none { it.range.first <= mr.last && mr.first <= it.range.last }
+    }
+    if (urlMatches.isEmpty() && mentions.isEmpty()) return AnnotatedString(text)
+
     val linkStyles = TextLinkStyles(
         style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
     )
+    // Neither URLs (non-overlapping by findAll) nor mentions overlap within
+    // their own kind, and overlapping mentions were filtered out above, so
+    // every special run has a distinct start index.
+    val urlByStart = urlMatches.associateBy { it.range.first }
+    val mentionByStart = mentions.associateBy { it.first }
+    val starts = (urlByStart.keys + mentionByStart.keys).sorted()
+
     return buildAnnotatedString {
         var cursor = 0
-        for (m in matches) {
-            val rawUrl = m.value
-            val url = rawUrl.trimEnd(*URL_TRAILING_TRIM.toCharArray())
-            if (m.range.first > cursor) append(text.substring(cursor, m.range.first))
-            withLink(LinkAnnotation.Url(url = url, styles = linkStyles)) {
-                append(url)
+        for (start in starts) {
+            if (start > cursor) append(text.substring(cursor, start))
+            val url = urlByStart[start]
+            if (url != null) {
+                val rawUrl = url.value
+                val trimmed = rawUrl.trimEnd(*URL_TRAILING_TRIM.toCharArray())
+                withLink(LinkAnnotation.Url(url = trimmed, styles = linkStyles)) {
+                    append(trimmed)
+                }
+                // Trailing punctuation we trimmed off the link stays plain text.
+                if (rawUrl.length > trimmed.length) append(rawUrl.substring(trimmed.length))
+                cursor = url.range.last + 1
+            } else {
+                val mr = mentionByStart.getValue(start)
+                withStyle(mentionStyle) { append(text.substring(mr.first, mr.last + 1)) }
+                cursor = mr.last + 1
             }
-            // Trailing punctuation we trimmed off the link stays as plain text.
-            if (rawUrl.length > url.length) append(rawUrl.substring(url.length))
-            cursor = m.range.last + 1
         }
         if (cursor < text.length) append(text.substring(cursor))
     }
