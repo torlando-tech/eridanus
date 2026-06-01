@@ -227,27 +227,28 @@ fun ChatScreen(
             val inputParts = inputText.split(" ")
             val inputCmd = inputParts.getOrNull(0)?.lowercase() ?: ""
             val (filteredMembers, memberPrefix) = when {
-                inputCmd in userArgCommands && inputParts.size == 2 -> {
-                    val partial = inputParts[1].lowercase()
-                    members.filter {
-                        partial.isEmpty() ||
-                        it.nick?.lowercase()?.startsWith(partial) == true ||
-                        it.hashPrefix.lowercase().startsWith(partial)
-                    } to "${inputParts[0]} "
-                }
+                inputCmd in userArgCommands && inputParts.size == 2 ->
+                    members.matchingMention(inputParts[1]) to "${inputParts[0]} "
                 inputCmd in userArgAfterSub && inputParts.size == 3
-                        && inputParts[1].lowercase() in setOf("add", "del") -> {
-                    val partial = inputParts[2].lowercase()
-                    members.filter {
-                        partial.isEmpty() ||
-                        it.nick?.lowercase()?.startsWith(partial) == true ||
-                        it.hashPrefix.lowercase().startsWith(partial)
-                    } to "${inputParts[0]} ${inputParts[1]} "
-                }
+                        && inputParts[1].lowercase() in setOf("add", "del") ->
+                    members.matchingMention(inputParts[2]) to "${inputParts[0]} ${inputParts[1]} "
                 else -> emptyList<RoomMember>() to ""
             }
 
-            AnimatedVisibility(visible = filteredCommands.isNotEmpty() || filteredMembers.isNotEmpty()) {
+            // @-mention autocomplete: anywhere in a non-command message, the
+            // word being typed under the cursor. Suppressed for commands, which
+            // keep their own arg completers above.
+            val cursor = inputField.selection
+            val mentionQuery = if (!inputText.startsWith("/") && cursor.collapsed) {
+                mentionQueryAt(inputText, cursor.start)
+            } else null
+            val filteredMentions = mentionQuery
+                ?.let { members.matchingMention(it.partial) }
+                ?: emptyList()
+
+            val showSuggestions = filteredCommands.isNotEmpty() ||
+                filteredMembers.isNotEmpty() || filteredMentions.isNotEmpty()
+            AnimatedVisibility(visible = showSuggestions) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
@@ -276,30 +277,23 @@ fun ChatScreen(
                                 )
                             }
                         }
+                        // Command-arg completion (/kick, /ban add, …): replace the
+                        // whole input with "<command prefix><name> ".
                         filteredMembers.forEach { member ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val name = member.nick ?: member.hashPrefix
-                                        val text = "$memberPrefix$name "
-                                        inputField = TextFieldValue(text, TextRange(text.length))
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    member.nick ?: "(no nick)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (member.nick != null) usernameColor(member.hashPrefix)
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    member.hashPrefix,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            MemberSuggestionRow(member) {
+                                val name = member.nick ?: member.hashPrefix
+                                val text = "$memberPrefix$name "
+                                inputField = TextFieldValue(text, TextRange(text.length))
+                            }
+                        }
+                        // @-mention completion: splice "@<name> " over just the
+                        // @-token under the cursor, keeping the rest of the draft.
+                        filteredMentions.forEach { member ->
+                            MemberSuggestionRow(member) {
+                                val q = mentionQuery ?: return@MemberSuggestionRow
+                                val name = member.nick ?: member.hashPrefix
+                                val result = applyMention(inputText, q, cursor.start, name)
+                                inputField = TextFieldValue(result.text, TextRange(result.cursor))
                             }
                         }
                     }
@@ -404,6 +398,35 @@ private fun MemberListSheet(
                 }
             }
         }
+    }
+}
+
+/**
+ * A tappable autocomplete suggestion for [member]: their nick (colored with the
+ * same per-user color as their chat messages, muted when nickless) alongside
+ * their hash prefix. Shared by the command-arg and `@`-mention completers.
+ */
+@Composable
+private fun MemberSuggestionRow(member: RoomMember, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            member.nick ?: "(no nick)",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = if (member.nick != null) usernameColor(member.hashPrefix)
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            member.hashPrefix,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
