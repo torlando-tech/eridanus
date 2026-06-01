@@ -194,6 +194,15 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests {
+            // RrcHub/RrcClient call android.util.Log; let the stubbed
+            // android.jar return defaults instead of throwing so the RRC
+            // protocol classes can be exercised in plain JVM unit tests.
+            isReturnDefaultValues = true
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

@@ -19,6 +19,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import tech.torlando.eridanus.rrc.RrcConstants.B_WELCOME_CAPS
 import tech.torlando.eridanus.rrc.RrcConstants.B_WELCOME_HUB
+import tech.torlando.eridanus.rrc.RrcConstants.CAP_ACTION
 import tech.torlando.eridanus.rrc.RrcConstants.B_WELCOME_LIMITS
 import tech.torlando.eridanus.rrc.RrcConstants.B_WELCOME_VER
 import tech.torlando.eridanus.rrc.RrcConstants.DEST_NAME
@@ -32,6 +33,7 @@ import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_NICK_BYTES
 import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_ROOMS_PER_SESSION
 import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_ROOM_NAME_BYTES
 import tech.torlando.eridanus.rrc.RrcConstants.L_RATE_LIMIT_MSGS_PER_MINUTE
+import tech.torlando.eridanus.rrc.RrcConstants.T_ACTION
 import tech.torlando.eridanus.rrc.RrcConstants.T_ERROR
 import tech.torlando.eridanus.rrc.RrcConstants.T_HELLO
 import tech.torlando.eridanus.rrc.RrcConstants.T_JOIN
@@ -491,6 +493,7 @@ class RrcHub(
             T_JOIN -> handleJoin(link, session, env)
             T_PART -> handlePart(link, session, env)
             T_MSG, T_NOTICE -> handleMessage(link, session, env)
+            T_ACTION -> handleMessage(link, session, env, isAction = true)
             T_PING -> {
                 val body = env[K_BODY]
                 val pong = RrcEnvelope.make(T_PONG, src = identity.hash, body = body)
@@ -631,13 +634,15 @@ class RrcHub(
 
     // ── T_MSG / T_NOTICE ───────────────────────────────────────────────
 
-    private fun handleMessage(link: RnsLink, session: HubSession, env: Map<Int, Any?>) {
+    private fun handleMessage(link: RnsLink, session: HubSession, env: Map<Int, Any?>, isAction: Boolean = false) {
         val body = env[K_BODY]
         val room = (env[K_ROOM] as? String)?.trim()?.lowercase()
         val peerHash = session.peerHash
 
-        // Slash command dispatch
-        if (body is String && body.trim().startsWith("/")) {
+        // Slash command dispatch. ACTION bodies are room content and are
+        // never interpreted as commands (matches rrcd 0.3.0+), so a "/me"-
+        // style action whose text starts with "/" is forwarded verbatim.
+        if (!isAction && body is String && body.trim().startsWith("/")) {
             val handled = commandHandler.handle(session, room, body)
             if (handled) return
             sendError(link, "unrecognized command", room)
@@ -706,7 +711,7 @@ class RrcHub(
         val welcomeBody = mapOf<Int, Any?>(
             B_WELCOME_HUB to hubName,
             B_WELCOME_VER to 1,
-            B_WELCOME_CAPS to emptyMap<Int, Any?>(),
+            B_WELCOME_CAPS to mapOf<Int, Any?>(CAP_ACTION to true),
             B_WELCOME_LIMITS to mapOf<Int, Any?>(
                 L_MAX_NICK_BYTES to RrcConstants.DEFAULT_MAX_NICK_BYTES,
                 L_MAX_ROOM_NAME_BYTES to RrcConstants.DEFAULT_MAX_ROOM_NAME_BYTES,

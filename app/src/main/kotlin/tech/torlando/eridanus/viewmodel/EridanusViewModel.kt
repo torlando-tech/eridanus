@@ -70,6 +70,8 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val isNotice: Boolean = false,
     val isError: Boolean = false,
+    // IRC-style action/emote (T_ACTION); rendered "* nick body".
+    val isAction: Boolean = false,
     // For join/part notices: the affected member's full destination hash.
     // Lets the renderer resolve a *current* nick from the room's member list
     // at display time (and re-resolve on member-list updates), so a join
@@ -1101,6 +1103,20 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             val parts = trimmed.split(" ", limit = 2)
             val cmd = parts[0].lowercase()
             val rest = parts.getOrNull(1) ?: ""
+            // /me is an action, not a hub command: send it as T_ACTION room
+            // content rather than letting it fall through to sendCommand
+            // (which the hub would reject as an unrecognized command).
+            if (cmd == "/me") {
+                if (rest.isBlank()) return
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        rrcClient?.sendAction(room, rest)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to send action", e)
+                    }
+                }
+                return
+            }
             val roomScoped = setOf(
                 "/topic", "/who", "/names", "/kick", "/ban",
                 "/op", "/deop", "/voice", "/devoice",
@@ -1142,6 +1158,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private fun showHelpMessage(room: String) {
         val helpText = """Available commands:
+/me <action> — send an action/emote
 /topic [text] — view or set room topic
 /who — list room members
 /kick <user> — kick a user
@@ -1435,6 +1452,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     nick = event.nick,
                     body = event.body,
                     src = event.src,
+                    isAction = event.isAction,
                 ))
                 // Opportunistically backfill the sender's nick into the
                 // room's member list. Without this, a peer who joined

@@ -28,6 +28,7 @@ import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_MSG_BODY_BYTES
 import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_NICK_BYTES
 import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_ROOMS_PER_SESSION
 import tech.torlando.eridanus.rrc.RrcConstants.L_MAX_ROOM_NAME_BYTES
+import tech.torlando.eridanus.rrc.RrcConstants.T_ACTION
 import tech.torlando.eridanus.rrc.RrcConstants.T_ERROR
 import tech.torlando.eridanus.rrc.RrcConstants.T_HELLO
 import tech.torlando.eridanus.rrc.RrcConstants.T_JOIN
@@ -45,11 +46,12 @@ import tech.torlando.eridanus.rrc.RrcConstants.B_RES_KIND
 import tech.torlando.eridanus.rrc.RrcConstants.B_RES_SIZE
 import tech.torlando.eridanus.rrc.RrcConstants.B_RES_SHA256
 import tech.torlando.eridanus.rrc.RrcConstants.B_RES_ENCODING
+import tech.torlando.eridanus.rrc.RrcConstants.CAP_ACTION
 import tech.torlando.eridanus.rrc.RrcConstants.CAP_RESOURCE_ENVELOPE
 
 sealed class RrcEvent {
     data class Welcome(val hubName: String?, val env: Map<Int, Any?>) : RrcEvent()
-    data class MessageReceived(val room: String, val nick: String?, val body: String, val src: ByteArray?) : RrcEvent()
+    data class MessageReceived(val room: String, val nick: String?, val body: String, val src: ByteArray?, val isAction: Boolean = false) : RrcEvent()
     data class NoticeReceived(val room: String?, val body: String) : RrcEvent()
     data class ErrorReceived(val room: String?, val text: String) : RrcEvent()
     data class Joined(val room: String, val members: List<ByteArray>?) : RrcEvent()
@@ -276,6 +278,17 @@ class RrcClient(
         send(env)
     }
 
+    fun sendAction(room: String, text: String) {
+        val r = room.trim().lowercase()
+        require(r.isNotEmpty()) { "Room name cannot be empty" }
+        require(text.isNotBlank()) { "Action cannot be empty" }
+        require(text.toByteArray().size <= maxMsgBodyBytes) {
+            "Action too long: ${text.toByteArray().size} bytes > $maxMsgBodyBytes"
+        }
+        val env = RrcEnvelope.make(T_ACTION, src = identity.hash, room = r, body = text, nick = nickname)
+        send(env)
+    }
+
     fun sendCommand(text: String, room: String? = null) {
         require(text.isNotBlank()) { "Command cannot be empty" }
         Log.d(TAG, "sendCommand: text='$text' room=$room")
@@ -290,6 +303,7 @@ class RrcClient(
     private fun sendHello(targetLink: RnsLink) {
         val caps = mapOf<Int, Any?>(
             CAP_RESOURCE_ENVELOPE to true,
+            CAP_ACTION to true,
         )
         val helloBody = mapOf<Int, Any?>(
             B_HELLO_NAME to APP_NAME,
@@ -436,6 +450,14 @@ class RrcClient(
                 val nick = env[K_NICK] as? String
                 val src = env[K_SRC] as? ByteArray
                 _events.tryEmit(RrcEvent.MessageReceived(room, nick, body, src))
+            }
+
+            T_ACTION -> {
+                val room = (env[K_ROOM] as? String) ?: return
+                val body = (env[K_BODY] as? String) ?: return
+                val nick = env[K_NICK] as? String
+                val src = env[K_SRC] as? ByteArray
+                _events.tryEmit(RrcEvent.MessageReceived(room, nick, body, src, isAction = true))
             }
 
             T_NOTICE -> {
