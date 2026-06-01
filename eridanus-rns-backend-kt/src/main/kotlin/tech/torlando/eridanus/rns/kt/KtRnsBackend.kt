@@ -87,8 +87,7 @@ class KtRnsBackend : RnsBackend {
         // own status line. Until reticulum-kt grows one, the kotlin
         // flavor simply shows rns-android's network-status notification;
         // eridanus's app-level status ("Connected to hub", …) is still
-        // visible in-app. Tracked: Obsidian note "reticulum-kt —
-        // ReticulumService app-status notification hook".
+        // visible in-app.
     }
 
     override fun setKeepAliveWakeLock(held: Boolean) {

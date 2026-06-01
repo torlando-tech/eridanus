@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
 """
 Verify that critical reflection-loaded classes survive R8 minification.
 
