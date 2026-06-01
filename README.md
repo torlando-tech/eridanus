@@ -50,4 +50,4 @@ Eridanus ships in two build flavors that bundle different Reticulum implementati
 
 ## AI Development
 
-This app has been made with AI assistance, almost exclusively Claude Opus via Claude Code. I am a software egineer by profession, but not in the mobile app space. The python backend build uses Mark Qvist's reference Reticulum implementation for all network communicati. The kotlin backend uses my own experimental Reticulum implementation, also heavily AI assisted. The kotlin backend has a smaller APK and may or may not improve your battery life while using Eridanus. 
+This app has been made with AI assistance, almost exclusively Claude Opus via Claude Code. I am a software egineer by profession, but not in the mobile app space. The python backend build uses Mark Qvist's reference Reticulum implementation for all network communication. The kotlin backend uses my own experimental Reticulum implementation, also heavily AI assisted. The kotlin backend has a smaller APK and may or may not improve your battery life while using Eridanus. 
