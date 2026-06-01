@@ -3,6 +3,7 @@
 package tech.torlando.eridanus.ui.screens
 
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
@@ -43,7 +45,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 
@@ -319,6 +324,8 @@ private fun HubCard(
     connectLabel: String,
 ) {
     val haptic = LocalHapticFeedback.current
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
 
     Box {
@@ -376,6 +383,15 @@ private fun HubCard(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
         ) {
+            DropdownMenuItem(
+                text = { Text("Copy hash") },
+                onClick = {
+                    showMenu = false
+                    clipboardManager.setText(AnnotatedString(hub.hexHash))
+                    Toast.makeText(context, "Hash copied", Toast.LENGTH_SHORT).show()
+                },
+                leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+            )
             DropdownMenuItem(
                 text = { Text("Remove") },
                 onClick = {
