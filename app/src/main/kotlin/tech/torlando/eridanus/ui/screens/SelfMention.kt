@@ -19,15 +19,17 @@ package tech.torlando.eridanus.ui.screens
 internal fun selfMentionRanges(text: String, nick: String): List<IntRange> {
     val trimmed = nick.trim()
     if (trimmed.isEmpty()) return emptyList()
-    // (?U)       — UNICODE_CHARACTER_CLASS: makes \w cover non-ASCII word chars
-    //              too (it's ASCII-only by default), so the guards below also
-    //              reject accented neighbours — e.g. "@bobé" for nick "bob", or
-    //              "ý@bob". Kotlin's RegexOption has no equivalent, so it's set
-    //              as an embedded flag passed through to java.util.regex.
-    // (?<![\w@]) — '@' isn't preceded by a word char (email) or another '@'.
-    // (?!\w)     — the name isn't immediately followed by more word chars.
+    // A Unicode-aware "word char" class. We deliberately avoid `\w`: it's
+    // ASCII-only on Android's (ICU-backed) regex engine, and the `(?U)` flag
+    // that would widen it on the desktop JVM throws PatternSyntaxException on
+    // Android — so JVM unit tests can't catch the difference. `[\p{L}\p{N}_]`
+    // is Unicode-aware on *both* engines, so the boundary guards also reject
+    // accented neighbours (e.g. "@bobé" for nick "bob", or "ý@bob").
+    val word = "\\p{L}\\p{N}_"
+    // (?<![word@]) — '@' isn't preceded by a word char (email) or another '@'.
+    // (?![word])   — the name isn't immediately followed by more word chars.
     val pattern = Regex(
-        "(?U)(?<![\\w@])@" + Regex.escape(trimmed) + "(?!\\w)",
+        "(?<![$word@])@" + Regex.escape(trimmed) + "(?![$word])",
         RegexOption.IGNORE_CASE,
     )
     return pattern.findAll(text).map { it.range }.toList()
