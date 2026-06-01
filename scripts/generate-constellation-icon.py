@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
 """
 Generate a constellation app icon SVG from a star pattern SVG.
 

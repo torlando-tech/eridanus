@@ -50,10 +50,9 @@ interface RnsBackend {
      * PyReticulumService's notification. The kotlin backend currently
      * no-ops: rns-android's ReticulumService builds its own notification
      * from a ConnectionSnapshot and exposes no app-status injection hook
-     * yet — tracked as a reticulum-kt follow-up (see the Obsidian note
-     * "reticulum-kt — ReticulumService app-status notification hook").
-     * Until that lands, the kotlin flavor shows rns-android's own
-     * network-status notification.
+     * yet — pending an upstream reticulum-kt change to add one. Until that
+     * lands, the kotlin flavor shows rns-android's own network-status
+     * notification.
      *
      * Safe to call from any thread; cheap enough to call on every status
      * change.
