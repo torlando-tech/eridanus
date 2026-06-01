@@ -292,13 +292,8 @@ fun ChatScreen(
                             MemberSuggestionRow(member) {
                                 val q = mentionQuery ?: return@MemberSuggestionRow
                                 val name = member.nick ?: member.hashPrefix
-                                val insert = "@$name "
-                                val before = inputText.substring(0, q.start)
-                                val after = inputText.substring(cursor.start)
-                                inputField = TextFieldValue(
-                                    before + insert + after,
-                                    TextRange(before.length + insert.length),
-                                )
+                                val result = applyMention(inputText, q, cursor.start, name)
+                                inputField = TextFieldValue(result.text, TextRange(result.cursor))
                             }
                         }
                     }

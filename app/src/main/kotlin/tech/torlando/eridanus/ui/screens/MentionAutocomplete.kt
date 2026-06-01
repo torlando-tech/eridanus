@@ -36,6 +36,34 @@ internal fun mentionQueryAt(text: String, cursor: Int): MentionQuery? {
 }
 
 /**
+ * The composer state after accepting a mention suggestion: the new [text] and
+ * the [cursor] index to place the caret at (just past the inserted "@name ").
+ */
+internal data class MentionInsertion(val text: String, val cursor: Int)
+
+/**
+ * Splices "@[name] " over the [query] token in [text], keeping everything
+ * before the `@` and everything from [cursor] onward.
+ *
+ * The inserted run ends in a space so the user can keep typing. When the text
+ * after the cursor already starts with a separator space (i.e. the mention was
+ * completed mid-message), that leading space is dropped so we don't end up with
+ * a double space — "hi @bo there" completing to "hi @bob there", not
+ * "hi @bob  there".
+ */
+internal fun applyMention(
+    text: String,
+    query: MentionQuery,
+    cursor: Int,
+    name: String,
+): MentionInsertion {
+    val before = text.substring(0, query.start)
+    val after = text.substring(cursor).removePrefix(" ")
+    val insert = "@$name "
+    return MentionInsertion(before + insert + after, before.length + insert.length)
+}
+
+/**
  * Members whose nick or hash prefix starts with [partial] (case-insensitive).
  * An empty [partial] matches everyone, so the full roster shows the moment a
  * `@` (or a bare command arg) is typed. Shared by the `@`-mention completer and

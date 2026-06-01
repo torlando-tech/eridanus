@@ -71,6 +71,40 @@ class MentionAutocompleteTest {
         assertNull(mentionQueryAt("@alice", 99))
     }
 
+    // ── applyMention ──────────────────────────────────────────────────
+
+    @Test
+    fun insertAtEndKeepsTrailingSpace() {
+        // "hi @bo" + cursor at end → "hi @bob " with the caret past the space.
+        val r = applyMention("hi @bo", MentionQuery(3, "bo"), 6, "bob")
+        assertEquals("hi @bob ", r.text)
+        assertEquals(8, r.cursor)
+    }
+
+    @Test
+    fun insertMidMessageDoesNotDoubleTheSeparatorSpace() {
+        // Regression for the Greptile P1: completing "@bo" in "hi @bo there"
+        // (cursor at 6) must yield a single space before "there".
+        val r = applyMention("hi @bo there", MentionQuery(3, "bo"), 6, "bob")
+        assertEquals("hi @bob there", r.text)
+        // Caret sits right after "@bob ", before "there".
+        assertEquals(8, r.cursor)
+    }
+
+    @Test
+    fun insertAtStartOfMessage() {
+        val r = applyMention("@al rest", MentionQuery(0, "al"), 3, "alice")
+        assertEquals("@alice rest", r.text)
+        assertEquals(7, r.cursor)
+    }
+
+    @Test
+    fun insertSplicesMultiWordNickIntact() {
+        val r = applyMention("hey @jo", MentionQuery(4, "jo"), 7, "John Doe")
+        assertEquals("hey @John Doe ", r.text)
+        assertEquals(14, r.cursor)
+    }
+
     // ── matchingMention ───────────────────────────────────────────────
 
     @Test
