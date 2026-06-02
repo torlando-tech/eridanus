@@ -66,9 +66,10 @@ internal fun detectChatLinks(text: String): List<ChatLink> {
     WEB_URL_REGEX.findAll(text).forEach {
         candidates += ChatLink(it.range, it.value, ChatLinkKind.WEB)
     }
-    if (candidates.size <= 1) return candidates
     // Earliest start first; on equal start the longer span first. Then greedily
-    // keep a candidate only if it starts past the last one we kept.
+    // keep a candidate only if it starts past the last one we kept. (This also
+    // covers the 0/1-candidate cases — the loop just yields a fresh empty or
+    // singleton list, rather than handing back the internal working list.)
     candidates.sortWith(compareBy({ it.range.first }, { -it.range.last }))
     val resolved = ArrayList<ChatLink>(candidates.size)
     var lastEnd = -1
@@ -88,3 +89,19 @@ internal fun detectChatLinks(text: String): List<ChatLink> {
  * verbatim; the receiving app does its own parsing.
  */
 internal fun toNomadNetUri(address: String): String = "nomadnetwork://$address"
+
+/** Trailing characters a web URL run commonly grabs but that aren't part of it. */
+internal const val URL_TRAILING_TRIM = ".,;:!?)]}\"'"
+
+/**
+ * Split a detected web [url] into the portion that should be linked and any
+ * trailing punctuation the greedy match grabbed, returned as `(link, trailing)`.
+ * The render layer links the first and appends the second as plain text — e.g.
+ * `"https://example.com."` links only `https://example.com` and shows the `.`.
+ * (NomadNet addresses need no trimming; their regex already excludes trailing
+ * punctuation.)
+ */
+internal fun splitWebUrlTrailing(url: String): Pair<String, String> {
+    val link = url.trimEnd(*URL_TRAILING_TRIM.toCharArray())
+    return link to url.substring(link.length)
+}

@@ -644,9 +644,6 @@ private fun openNomadNetLink(context: Context, uri: String) {
     }
 }
 
-/** Trailing characters a web URL run commonly grabs but that aren't part of it. */
-private const val URL_TRAILING_TRIM = ".,;:!?)]}\"'"
-
 /**
  * Build an [AnnotatedString] for a message body, interleaving link and mention
  * runs in a single left-to-right pass:
@@ -692,13 +689,12 @@ private fun buildMessageBody(
             val link = linkByStart[start]
             when (link?.kind) {
                 ChatLinkKind.WEB -> {
-                    val rawUrl = link.text
-                    val trimmed = rawUrl.trimEnd(*URL_TRAILING_TRIM.toCharArray())
-                    withLink(LinkAnnotation.Url(url = trimmed, styles = linkStyles)) {
-                        append(trimmed)
+                    val (linkUrl, trailing) = splitWebUrlTrailing(link.text)
+                    withLink(LinkAnnotation.Url(url = linkUrl, styles = linkStyles)) {
+                        append(linkUrl)
                     }
-                    // Trailing punctuation we trimmed off the link stays plain text.
-                    if (rawUrl.length > trimmed.length) append(rawUrl.substring(trimmed.length))
+                    // Trailing punctuation the match grabbed stays plain text.
+                    if (trailing.isNotEmpty()) append(trailing)
                     cursor = link.range.last + 1
                 }
                 ChatLinkKind.NOMADNET -> {

@@ -93,4 +93,20 @@ class ChatLinksTest {
         val addr = "$hash:/page/index.mu`a=b"
         assertEquals("nomadnetwork://$addr", toNomadNetUri(addr))
     }
+
+    @Test
+    fun webUrlTrailingPunctuationIsSplitOffForLinking() {
+        // "see https://example.com." → link "https://example.com", plain "."
+        assertEquals("https://example.com" to ".", splitWebUrlTrailing("https://example.com."))
+    }
+
+    @Test
+    fun webUrlTrailingCloserAndPeriodAreSplitOff() {
+        assertEquals("https://example.com/p" to ")." , splitWebUrlTrailing("https://example.com/p)."))
+    }
+
+    @Test
+    fun webUrlWithoutTrailingPunctuationIsUnchanged() {
+        assertEquals("https://example.com/p" to "", splitWebUrlTrailing("https://example.com/p"))
+    }
 }
