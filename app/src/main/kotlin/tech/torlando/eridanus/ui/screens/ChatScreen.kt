@@ -2,6 +2,11 @@
 
 package tech.torlando.eridanus.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,9 +68,11 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
@@ -578,8 +585,10 @@ private fun MessageItem(message: ChatMessage, members: List<RoomMember>, selfNic
 /**
  * Message body text that (a) is selectable so the user can copy it (handy
  * for grabbing a pasted URL), (b) renders any http(s) links as tappable,
- * underlined primary-colored spans that open in the system browser, and
- * (c) renders self-mentions ([mentionRanges]) as a tinted chip.
+ * underlined primary-colored spans that open in the system browser, (c) renders
+ * bare NomadNet page addresses (`<hash>:/path.mu`) as tappable spans that hand
+ * off to an installed NomadNet app, and (d) renders self-mentions
+ * ([mentionRanges]) as a tinted chip.
  *
  * Tappable links and text selection coexisting in one [Text] is a Compose
  * 1.7 capability ([LinkAnnotation] inside a [SelectionContainer]); on 1.6
@@ -594,76 +603,119 @@ private fun LinkifiedText(
     val linkColor = MaterialTheme.colorScheme.primary
     val mentionBg = MaterialTheme.colorScheme.tertiaryContainer
     val mentionFg = MaterialTheme.colorScheme.onTertiaryContainer
-    val annotated = remember(text, linkColor, mentionRanges, mentionBg, mentionFg) {
+    val context = LocalContext.current
+    // A tap on a NomadNet link fires an ACTION_VIEW intent for its
+    // nomadnetwork:// URI, which an installed NomadNet-capable app (Columba,
+    // Sideband, …) handles; with none installed we toast instead of crashing.
+    // Web links need no listener — LinkAnnotation.Url routes through the
+    // LocalUriHandler to the platform browser.
+    val nomadnetListener = remember(context) {
+        LinkInteractionListener { link ->
+            (link as? LinkAnnotation.Clickable)?.tag?.let { openNomadNetLink(context, it) }
+        }
+    }
+    val annotated = remember(text, linkColor, mentionRanges, mentionBg, mentionFg, nomadnetListener) {
         val mentionStyle = SpanStyle(
             background = mentionBg,
             color = mentionFg,
             fontWeight = FontWeight.Medium,
         )
-        buildMessageBody(text, linkColor, mentionRanges, mentionStyle)
+        buildMessageBody(text, linkColor, mentionRanges, mentionStyle, nomadnetListener)
     }
     SelectionContainer {
-        // LinkAnnotation.Url with no explicit listener routes taps through
-        // the LocalUriHandler, which opens the platform browser.
         Text(text = annotated, style = style)
     }
 }
 
-private val URL_REGEX = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
-
-/** Trailing characters a URL run commonly grabs but that aren't part of it. */
-private const val URL_TRAILING_TRIM = ".,;:!?)]}\"'"
+/**
+ * Open a NomadNet [uri] (a `nomadnetwork://…` address) by handing it to whatever
+ * app on the device registers that scheme. Eridanus has no in-app NomadNet
+ * browser, so with no handler installed we show a toast rather than crash.
+ */
+private fun openNomadNetLink(context: Context, uri: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(
+            context,
+            "No NomadNet app installed to open this link",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+}
 
 /**
- * Build an [AnnotatedString] for a message body, interleaving two kinds of
- * styled run in a single left-to-right pass:
+ * Build an [AnnotatedString] for a message body, interleaving link and mention
+ * runs in a single left-to-right pass:
  * - each http(s) URL becomes a tappable [LinkAnnotation.Url] (underlined,
- *   [linkColor]); trailing punctuation grabbed by the match stays plain text;
+ *   [linkColor]) that opens in the system browser; trailing punctuation grabbed
+ *   by the match stays plain text;
+ * - each bare NomadNet address ([detectChatLinks]) becomes a tappable
+ *   [LinkAnnotation.Clickable] carrying its `nomadnetwork://` URI, routed on tap
+ *   to [nomadnetListener];
  * - each range in [mentionRanges] is styled with [mentionStyle].
  *
- * A mention overlapping a URL is dropped (the URL wins, since it's tappable).
- * Returns a plain string when there's nothing to style.
+ * A mention overlapping a link is dropped (the link wins, since it's tappable);
+ * web/NomadNet overlaps are already resolved by [detectChatLinks]. Returns a
+ * plain string when there's nothing to style.
  */
 private fun buildMessageBody(
     text: String,
     linkColor: Color,
     mentionRanges: List<IntRange>,
     mentionStyle: SpanStyle,
+    nomadnetListener: LinkInteractionListener,
 ): AnnotatedString {
-    val urlMatches = URL_REGEX.findAll(text).toList()
+    val links = detectChatLinks(text)
     val mentions = mentionRanges.filter { mr ->
-        urlMatches.none { it.range.first <= mr.last && mr.first <= it.range.last }
+        links.none { it.range.first <= mr.last && mr.first <= it.range.last }
     }
-    if (urlMatches.isEmpty() && mentions.isEmpty()) return AnnotatedString(text)
+    if (links.isEmpty() && mentions.isEmpty()) return AnnotatedString(text)
 
     val linkStyles = TextLinkStyles(
         style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
     )
-    // Neither URLs (non-overlapping by findAll) nor mentions overlap within
-    // their own kind, and overlapping mentions were filtered out above, so
-    // every special run has a distinct start index.
-    val urlByStart = urlMatches.associateBy { it.range.first }
+    // Links don't overlap (resolved in detectChatLinks) and mentions don't
+    // overlap each other; mentions overlapping a link were filtered out above,
+    // so every special run has a distinct start index.
+    val linkByStart = links.associateBy { it.range.first }
     val mentionByStart = mentions.associateBy { it.first }
-    val starts = (urlByStart.keys + mentionByStart.keys).sorted()
+    val starts = (linkByStart.keys + mentionByStart.keys).sorted()
 
     return buildAnnotatedString {
         var cursor = 0
         for (start in starts) {
             if (start > cursor) append(text.substring(cursor, start))
-            val url = urlByStart[start]
-            if (url != null) {
-                val rawUrl = url.value
-                val trimmed = rawUrl.trimEnd(*URL_TRAILING_TRIM.toCharArray())
-                withLink(LinkAnnotation.Url(url = trimmed, styles = linkStyles)) {
-                    append(trimmed)
+            val link = linkByStart[start]
+            when (link?.kind) {
+                ChatLinkKind.WEB -> {
+                    val (linkUrl, trailing) = splitWebUrlTrailing(link.text)
+                    withLink(LinkAnnotation.Url(url = linkUrl, styles = linkStyles)) {
+                        append(linkUrl)
+                    }
+                    // Trailing punctuation the match grabbed stays plain text.
+                    if (trailing.isNotEmpty()) append(trailing)
+                    cursor = link.range.last + 1
                 }
-                // Trailing punctuation we trimmed off the link stays plain text.
-                if (rawUrl.length > trimmed.length) append(rawUrl.substring(trimmed.length))
-                cursor = url.range.last + 1
-            } else {
-                val mr = mentionByStart.getValue(start)
-                withStyle(mentionStyle) { append(text.substring(mr.first, mr.last + 1)) }
-                cursor = mr.last + 1
+                ChatLinkKind.NOMADNET -> {
+                    // The matched address carries no trailing punctuation to
+                    // trim (the regex excludes it). Tap → nomadnetListener.
+                    withLink(
+                        LinkAnnotation.Clickable(
+                            tag = toNomadNetUri(link.text),
+                            styles = linkStyles,
+                            linkInteractionListener = nomadnetListener,
+                        ),
+                    ) {
+                        append(link.text)
+                    }
+                    cursor = link.range.last + 1
+                }
+                null -> {
+                    val mr = mentionByStart.getValue(start)
+                    withStyle(mentionStyle) { append(text.substring(mr.first, mr.last + 1)) }
+                    cursor = mr.last + 1
+                }
             }
         }
         if (cursor < text.length) append(text.substring(cursor))
