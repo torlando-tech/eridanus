@@ -56,6 +56,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -147,11 +148,37 @@ fun ChatScreen(
     var inputField by remember { mutableStateOf(TextFieldValue()) }
     val listState = rememberLazyListState()
     var showMemberSheet by remember { mutableStateOf(false) }
-
-    LaunchedEffect(visibleMessages.size) {
-        if (visibleMessages.isNotEmpty()) {
-            listState.animateScrollToItem(visibleMessages.size - 1)
+    // Resets per room (keyed on currentRoom) so opening or switching into a room
+    // jumps straight to the latest message.
+    var initialScrollDone by remember(currentRoom) { mutableStateOf(false) }
+    // Set when the user sends, so their own outgoing message scrolls into view
+    // even if they were reading scrollback.
+    var scrollOnSend by remember { mutableStateOf(false) }
+    // True while the viewport sits at (or within a message of) the bottom. New
+    // messages only stick to the bottom when this holds, so scrolling up to read
+    // history isn't yanked back down.
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= info.totalItemsCount - SCROLL_STICK_SLACK
         }
+    }
+
+    LaunchedEffect(currentRoom, visibleMessages.size) {
+        if (visibleMessages.isEmpty()) return@LaunchedEffect
+        val lastIndex = visibleMessages.size - 1
+        when {
+            // First messages for this room: jump straight to the latest.
+            !initialScrollDone -> {
+                listState.scrollToItem(lastIndex)
+                initialScrollDone = true
+            }
+            // New message: follow the bottom only if already near it, or if we
+            // just sent one ourselves.
+            atBottom || scrollOnSend -> listState.animateScrollToItem(lastIndex)
+        }
+        scrollOnSend = false
     }
 
     if (showMemberSheet) {
@@ -358,6 +385,7 @@ fun ChatScreen(
 
             val sendCurrent = {
                 if (inputText.isNotBlank()) {
+                    scrollOnSend = true
                     viewModel.sendInput(inputText.trim())
                     inputField = TextFieldValue()
                 }
@@ -519,6 +547,11 @@ private fun MemberRow(member: RoomMember) {
  */
 private fun ByteArray.toColorKey(): String =
     take(6).joinToString("") { "%02x".format(it) }
+
+// How close to the bottom (in messages) the viewport must be for a new message
+// to auto-scroll. >= 2 because an appended message that lands just below the
+// fold leaves the previous last item at totalItems - 2.
+private const val SCROLL_STICK_SLACK = 2
 
 // Ephemeral join/part flash timing: hold at full opacity briefly, then fade to
 // nothing over ~2s ("a couple seconds").
