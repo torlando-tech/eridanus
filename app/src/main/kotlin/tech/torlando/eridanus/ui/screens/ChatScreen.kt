@@ -60,6 +60,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,6 +99,7 @@ import tech.torlando.eridanus.viewmodel.ChatMessage
 import tech.torlando.eridanus.viewmodel.RoomMember
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -147,13 +149,11 @@ fun ChatScreen(
     val members = currentRoom?.let { roomMemberList[it] } ?: emptyList()
     var inputField by remember { mutableStateOf(TextFieldValue()) }
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var showMemberSheet by remember { mutableStateOf(false) }
     // Resets per room (keyed on currentRoom) so opening or switching into a room
     // jumps straight to the latest message.
     var initialScrollDone by remember(currentRoom) { mutableStateOf(false) }
-    // Set when the user sends, so their own outgoing message scrolls into view
-    // even if they were reading scrollback.
-    var scrollOnSend by remember { mutableStateOf(false) }
     // True while the viewport sits at (or within a message of) the bottom. New
     // messages only stick to the bottom when this holds, so scrolling up to read
     // history isn't yanked back down.
@@ -174,11 +174,11 @@ fun ChatScreen(
                 listState.scrollToItem(lastIndex)
                 initialScrollDone = true
             }
-            // New message: follow the bottom only if already near it, or if we
-            // just sent one ourselves.
-            atBottom || scrollOnSend -> listState.animateScrollToItem(lastIndex)
+            // New message: follow the bottom only when already near it, so
+            // reading scrollback isn't interrupted. Sending drops to the bottom
+            // (see sendCurrent), which puts us here for our own echoed message.
+            atBottom -> listState.animateScrollToItem(lastIndex)
         }
-        scrollOnSend = false
     }
 
     if (showMemberSheet) {
@@ -385,9 +385,16 @@ fun ChatScreen(
 
             val sendCurrent = {
                 if (inputText.isNotBlank()) {
-                    scrollOnSend = true
                     viewModel.sendInput(inputText.trim())
                     inputField = TextFieldValue()
+                    // Drop to the bottom so the user's own (asynchronously
+                    // echoed) message — and anything after it — is followed by
+                    // the atBottom auto-scroll above, regardless of prior scroll
+                    // position. scrollToItem settles before the network echo, so
+                    // there's no flag to misfire on an intervening peer message.
+                    coroutineScope.launch {
+                        listState.scrollToItem(maxOf(0, visibleMessages.size - 1))
+                    }
                 }
             }
 
