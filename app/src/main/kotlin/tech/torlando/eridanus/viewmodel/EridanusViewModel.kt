@@ -162,9 +162,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     )
 
     // When true, other members' join/part notices are hidden from the room
-    // scrollback and shown ephemerally instead (see joinPartNotices).
+    // scrollback and shown ephemerally instead (see joinPartNotices). Defaults
+    // to true (matching PreferencesManager) so the initial value before the
+    // DataStore flow emits doesn't flash the persistent notices on first paint.
     val hideJoinPart: StateFlow<Boolean> = prefs.hideJoinPart.stateIn(
-        viewModelScope, SharingStarted.Eagerly, false
+        viewModelScope, SharingStarted.Eagerly, true
     )
 
     fun setHideJoinPart(enabled: Boolean) {

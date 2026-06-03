@@ -105,10 +105,11 @@ class PreferencesManager(private val context: Context) {
     /**
      * When true, other members' join/part notices are not kept in the room
      * scrollback; the chat view shows each one ephemerally (a single line that
-     * fades out) instead. Defaults to false (join/part shown persistently).
+     * fades out) instead. Defaults to true (hidden/ephemeral) so fresh installs
+     * start quiet; the user can switch it off per the room three-dot menu.
      */
     val hideJoinPart: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_HIDE_JOIN_PART] ?: false
+        prefs[KEY_HIDE_JOIN_PART] ?: true
     }
 
     val hubDefaultRooms: Flow<List<DefaultRoomConfig>> = context.dataStore.data.map { prefs ->
