@@ -8,9 +8,12 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,10 +59,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -89,6 +95,8 @@ import tech.torlando.eridanus.ui.theme.usernameColor
 import tech.torlando.eridanus.viewmodel.EridanusViewModel
 import tech.torlando.eridanus.viewmodel.ChatMessage
 import tech.torlando.eridanus.viewmodel.RoomMember
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharedFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -127,6 +135,12 @@ fun ChatScreen(
     val roomMemberCounts by viewModel.roomMemberCounts.collectAsState()
     val roomMemberList by viewModel.roomMemberList.collectAsState()
     val selfNick by viewModel.nickname.collectAsState()
+    val hideJoinPart by viewModel.hideJoinPart.collectAsState()
+    // When join/part are hidden, drop them from the scrollback; new ones are
+    // surfaced ephemerally by EphemeralJoinPartNotice instead.
+    val visibleMessages = remember(roomMessages, hideJoinPart) {
+        if (hideJoinPart) roomMessages.filterNot { it.isJoinPart } else roomMessages
+    }
     val topic = currentRoom?.let { roomTopics[it] }
     val memberCount = currentRoom?.let { roomMemberCounts[it] }
     val members = currentRoom?.let { roomMemberList[it] } ?: emptyList()
@@ -134,9 +148,9 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var showMemberSheet by remember { mutableStateOf(false) }
 
-    LaunchedEffect(roomMessages.size) {
-        if (roomMessages.isNotEmpty()) {
-            listState.animateScrollToItem(roomMessages.size - 1)
+    LaunchedEffect(visibleMessages.size) {
+        if (visibleMessages.isNotEmpty()) {
+            listState.animateScrollToItem(visibleMessages.size - 1)
         }
     }
 
@@ -192,6 +206,18 @@ fun ChatScreen(
                         onDismissRequest = { menuExpanded = false },
                     ) {
                         DropdownMenuItem(
+                            text = { Text("Hide join/part") },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.setHideJoinPart(!hideJoinPart)
+                            },
+                            trailingIcon = if (hideJoinPart) {
+                                { Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                            } else {
+                                null
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Leave Room") },
                             onClick = {
                                 menuExpanded = false
@@ -214,17 +240,36 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(paddingValues),
         ) {
-            LazyColumn(
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                    .fillMaxWidth(),
             ) {
-                items(roomMessages) { message ->
-                    MessageItem(message, members, selfNick)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(visibleMessages) { message ->
+                        MessageItem(message, members, selfNick)
+                    }
                 }
+
+                // While join/part are hidden, flash each new one here and let it
+                // fade out, instead of keeping it in the scrollback above.
+                EphemeralJoinPartNotice(
+                    notices = viewModel.joinPartNotices,
+                    room = currentRoom,
+                    active = hideJoinPart,
+                    members = members,
+                    selfNick = selfNick,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
             }
 
             val inputText = inputField.text
@@ -474,6 +519,73 @@ private fun MemberRow(member: RoomMember) {
  */
 private fun ByteArray.toColorKey(): String =
     take(6).joinToString("") { "%02x".format(it) }
+
+// Ephemeral join/part flash timing: hold at full opacity briefly, then fade to
+// nothing over ~2s ("a couple seconds").
+private const val EPHEMERAL_HOLD_MS = 600L
+private const val EPHEMERAL_FADE_MS = 2000L
+
+/**
+ * A single join/part notice that flashes in and fades to nothing over a couple
+ * seconds — shown only while [active] (the "hide join/part" setting is on). Each
+ * new notice for [room] restarts the show-then-fade cycle (latest wins), and
+ * the flash is cancelled when the room changes or [active] goes false. Rendered
+ * via [MessageItem] so it reuses the same nick resolution and styling as the
+ * persistent notice it stands in for. Occupies no layout space when idle, so it
+ * never shifts the composer.
+ */
+@Composable
+private fun EphemeralJoinPartNotice(
+    notices: SharedFlow<Pair<String, ChatMessage>>,
+    room: String?,
+    active: Boolean,
+    members: List<RoomMember>,
+    selfNick: String,
+    modifier: Modifier = Modifier,
+) {
+    var notice by remember { mutableStateOf<ChatMessage?>(null) }
+    var trigger by remember { mutableStateOf(0) }
+    val alpha = remember { Animatable(0f) }
+
+    // The collector lives across recompositions; read the latest values through
+    // these so it doesn't capture a stale room/active.
+    val activeState = rememberUpdatedState(active)
+    val roomState = rememberUpdatedState(room)
+    LaunchedEffect(Unit) {
+        notices.collect { (noticeRoom, message) ->
+            if (activeState.value && noticeRoom == roomState.value) {
+                notice = message
+                trigger++
+            }
+        }
+    }
+
+    // Cancel any in-flight flash when leaving the room or turning the toggle off.
+    LaunchedEffect(room, active) {
+        notice = null
+        alpha.snapTo(0f)
+    }
+
+    LaunchedEffect(trigger) {
+        if (trigger == 0) return@LaunchedEffect
+        alpha.snapTo(1f)
+        delay(EPHEMERAL_HOLD_MS)
+        alpha.animateTo(0f, animationSpec = tween(EPHEMERAL_FADE_MS.toInt()))
+        notice = null
+    }
+
+    notice?.let { current ->
+        // The surface background keeps the line legible while it overlays the
+        // bottom of the scrollback, and fades out together with the text.
+        Box(
+            modifier = modifier
+                .graphicsLayer { this.alpha = alpha.value }
+                .background(MaterialTheme.colorScheme.surface),
+        ) {
+            MessageItem(current, members, selfNick)
+        }
+    }
+}
 
 @Composable
 private fun MessageItem(message: ChatMessage, members: List<RoomMember>, selfNick: String) {

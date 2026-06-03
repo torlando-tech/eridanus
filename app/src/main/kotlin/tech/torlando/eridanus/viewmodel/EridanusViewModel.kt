@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -80,6 +81,11 @@ data class ChatMessage(
     // verb ("joined" / "left") in that case; the renderer prepends the
     // actor — see MessageItem in ChatScreen.
     val memberHash: ByteArray? = null,
+    // True only for *other* members' join/part notices (set at the
+    // MemberJoined/MemberParted handlers). Lets the chat view hide them from
+    // the scrollback and flash them ephemerally when the "hide join/part"
+    // setting is on. Self join/leave and other system notices stay false.
+    val isJoinPart: Boolean = false,
 )
 
 class EridanusViewModel(application: Application) : AndroidViewModel(application) {
@@ -154,6 +160,28 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     val hubName: StateFlow<String> = prefs.hubName.stateIn(
         viewModelScope, SharingStarted.Eagerly, "Eridanus Hub"
     )
+
+    // When true, other members' join/part notices are hidden from the room
+    // scrollback and shown ephemerally instead (see joinPartNotices). Defaults
+    // to true (matching PreferencesManager) so the initial value before the
+    // DataStore flow emits doesn't flash the persistent notices on first paint.
+    val hideJoinPart: StateFlow<Boolean> = prefs.hideJoinPart.stateIn(
+        viewModelScope, SharingStarted.Eagerly, true
+    )
+
+    fun setHideJoinPart(enabled: Boolean) {
+        viewModelScope.launch { prefs.setHideJoinPart(enabled) }
+    }
+
+    // Fires (room, message) for every other-member join/part as it arrives, so
+    // the chat view can flash it ephemerally while hideJoinPart is on. The
+    // notice is *also* recorded in _messages, so toggling hideJoinPart off
+    // reveals the full history — this stream is purely for the live flash.
+    private val _joinPartNotices = MutableSharedFlow<Pair<String, ChatMessage>>(
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val joinPartNotices: SharedFlow<Pair<String, ChatMessage>> = _joinPartNotices
 
     // Reticulum state
     private val _reticulumStarted = MutableStateFlow(false)
@@ -1567,13 +1595,16 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 // short hash until we learn the nick from the joiner's first
                 // message (MessageReceived backfill) — the notice re-renders
                 // then, since it resolves the member list at display time.
-                addMessage(event.room, ChatMessage(
+                val joinMsg = ChatMessage(
                     nick = null,
                     body = "joined",
                     src = null,
                     isNotice = true,
                     memberHash = event.memberHash,
-                ))
+                    isJoinPart = true,
+                )
+                addMessage(event.room, joinMsg)
+                _joinPartNotices.tryEmit(event.room to joinMsg)
                 val counts = _roomMemberCounts.value.toMutableMap()
                 counts[event.room] = (counts[event.room] ?: 0) + 1
                 _roomMemberCounts.value = counts
@@ -1607,12 +1638,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     ?.firstOrNull { it.hashPrefix == prefix }?.nick
                 val shortHash = event.memberHash.take(6).joinToString("") { "%02x".format(it) }
                 val actor = event.nick?.takeIf { it.isNotEmpty() } ?: knownNick ?: shortHash
-                addMessage(event.room, ChatMessage(
+                val partMsg = ChatMessage(
                     nick = null,
                     body = "$actor left",
                     src = null,
                     isNotice = true,
-                ))
+                    isJoinPart = true,
+                )
+                addMessage(event.room, partMsg)
+                _joinPartNotices.tryEmit(event.room to partMsg)
                 val counts = _roomMemberCounts.value.toMutableMap()
                 val current = counts[event.room] ?: 0
                 if (current > 0) counts[event.room] = current - 1

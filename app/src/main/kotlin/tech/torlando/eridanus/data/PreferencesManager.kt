@@ -33,6 +33,7 @@ class PreferencesManager(private val context: Context) {
         private val KEY_HUB_DEFAULT_ROOMS = stringPreferencesKey("hub_default_rooms")
         private val KEY_HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
         private val KEY_KEEP_ALIVE_BACKGROUND = booleanPreferencesKey("keep_alive_background")
+        private val KEY_HIDE_JOIN_PART = booleanPreferencesKey("hide_join_part")
     }
 
     val theme: Flow<PresetTheme> = context.dataStore.data.map { prefs ->
@@ -99,6 +100,16 @@ class PreferencesManager(private val context: Context) {
      */
     val keepConnectionAlive: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_KEEP_ALIVE_BACKGROUND] ?: false
+    }
+
+    /**
+     * When true, other members' join/part notices are not kept in the room
+     * scrollback; the chat view shows each one ephemerally (a single line that
+     * fades out) instead. Defaults to true (hidden/ephemeral) so fresh installs
+     * start quiet; the user can switch it off per the room three-dot menu.
+     */
+    val hideJoinPart: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HIDE_JOIN_PART] ?: true
     }
 
     val hubDefaultRooms: Flow<List<DefaultRoomConfig>> = context.dataStore.data.map { prefs ->
@@ -191,6 +202,10 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setKeepConnectionAlive(enabled: Boolean) {
         context.dataStore.edit { it[KEY_KEEP_ALIVE_BACKGROUND] = enabled }
+    }
+
+    suspend fun setHideJoinPart(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_HIDE_JOIN_PART] = enabled }
     }
 
     suspend fun setHubDefaultRooms(rooms: List<DefaultRoomConfig>) {
