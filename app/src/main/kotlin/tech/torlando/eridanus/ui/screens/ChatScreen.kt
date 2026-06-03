@@ -56,9 +56,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -97,6 +99,7 @@ import tech.torlando.eridanus.viewmodel.ChatMessage
 import tech.torlando.eridanus.viewmodel.RoomMember
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -146,11 +149,35 @@ fun ChatScreen(
     val members = currentRoom?.let { roomMemberList[it] } ?: emptyList()
     var inputField by remember { mutableStateOf(TextFieldValue()) }
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var showMemberSheet by remember { mutableStateOf(false) }
+    // Resets per room (keyed on currentRoom) so opening or switching into a room
+    // jumps straight to the latest message.
+    var initialScrollDone by remember(currentRoom) { mutableStateOf(false) }
+    // True while the viewport sits at (or within a message of) the bottom. New
+    // messages only stick to the bottom when this holds, so scrolling up to read
+    // history isn't yanked back down.
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= info.totalItemsCount - SCROLL_STICK_SLACK
+        }
+    }
 
-    LaunchedEffect(visibleMessages.size) {
-        if (visibleMessages.isNotEmpty()) {
-            listState.animateScrollToItem(visibleMessages.size - 1)
+    LaunchedEffect(currentRoom, visibleMessages.size) {
+        if (visibleMessages.isEmpty()) return@LaunchedEffect
+        val lastIndex = visibleMessages.size - 1
+        when {
+            // First messages for this room: jump straight to the latest.
+            !initialScrollDone -> {
+                listState.scrollToItem(lastIndex)
+                initialScrollDone = true
+            }
+            // New message: follow the bottom only when already near it, so
+            // reading scrollback isn't interrupted. Sending drops to the bottom
+            // (see sendCurrent), which puts us here for our own echoed message.
+            atBottom -> listState.animateScrollToItem(lastIndex)
         }
     }
 
@@ -360,6 +387,14 @@ fun ChatScreen(
                 if (inputText.isNotBlank()) {
                     viewModel.sendInput(inputText.trim())
                     inputField = TextFieldValue()
+                    // Drop to the bottom so the user's own (asynchronously
+                    // echoed) message — and anything after it — is followed by
+                    // the atBottom auto-scroll above, regardless of prior scroll
+                    // position. scrollToItem settles before the network echo, so
+                    // there's no flag to misfire on an intervening peer message.
+                    coroutineScope.launch {
+                        listState.scrollToItem(maxOf(0, visibleMessages.size - 1))
+                    }
                 }
             }
 
@@ -519,6 +554,11 @@ private fun MemberRow(member: RoomMember) {
  */
 private fun ByteArray.toColorKey(): String =
     take(6).joinToString("") { "%02x".format(it) }
+
+// How close to the bottom (in messages) the viewport must be for a new message
+// to auto-scroll. >= 2 because an appended message that lands just below the
+// fold leaves the previous last item at totalItems - 2.
+private const val SCROLL_STICK_SLACK = 2
 
 // Ephemeral join/part flash timing: hold at full opacity briefly, then fade to
 // nothing over ~2s ("a couple seconds").
