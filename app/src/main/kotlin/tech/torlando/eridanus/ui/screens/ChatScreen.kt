@@ -523,7 +523,7 @@ private fun ByteArray.toColorKey(): String =
 // Ephemeral join/part flash timing: hold at full opacity briefly, then fade to
 // nothing over ~2s ("a couple seconds").
 private const val EPHEMERAL_HOLD_MS = 600L
-private const val EPHEMERAL_FADE_MS = 2000
+private const val EPHEMERAL_FADE_MS = 2000L
 
 /**
  * A single join/part notice that flashes in and fades to nothing over a couple
@@ -570,7 +570,7 @@ private fun EphemeralJoinPartNotice(
         if (trigger == 0) return@LaunchedEffect
         alpha.snapTo(1f)
         delay(EPHEMERAL_HOLD_MS)
-        alpha.animateTo(0f, animationSpec = tween(EPHEMERAL_FADE_MS))
+        alpha.animateTo(0f, animationSpec = tween(EPHEMERAL_FADE_MS.toInt()))
         notice = null
     }
 
