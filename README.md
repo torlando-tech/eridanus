@@ -23,9 +23,23 @@ Eridanus is an Android app that lets you create and join chatrooms on the Reticu
 
 ## Getting Started
 
-Download the latest release from [Releases](https://github.com/torlando-tech/eridanus/releases) and install on your Android device.
+Download the latest release from [Releases](https://github.com/torlando-tech/eridanus/releases) and install on your Android device, or use the Obtainium link below.
 
 **Eridanus requires a shared Reticulum instance on your phone, so you'll need a way to connect to the Reticulum network.** The most reliable option is [Sideband](https://github.com/markqvist/Sideband) running on the same device, with the Shared Instance option enabled. As of v2.0.0-beta, [Columba](https://github.com/torlando-tech/columba) also offers a Shared Instance toggle. If you're feeling more adventurous, you can try [Reticulum for Android](https://github.com/torlando-tech/reticulum-android) which provides a configuration UI for the reference python implementation of Reticulum. If you already have RNS running on your device, Eridanus can connect to it directly, so long as it has enabled its shared instance.
+
+
+### Auto-updates with Obtainium
+
+[Obtainium](https://github.com/ImranR98/Obtainium) installs and auto-updates Eridanus straight from GitHub Releases. Tap a badge below on your phone (Obtainium must be
+installed):
+
+<p align="left">
+  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22tech.torlando.eridanus.python%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Ftorlando-t
+ech%2Feridanus%22%2C%22author%22%3A%22torlando-tech%22%2C%22name%22%3A%22Eridanus%22%2C%22additionalSettings%22%3A%22%7B%5C%22apkFilterRegEx%5C%22%3A%20%5C%22eridanus-python%5C
+%22%2C%20%5C%22about%5C%22%3A%20%5C%22IRC-style%20chatrooms%20over%20Reticulum%5C%22%7D%22%7D">
+    <img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Add Eridanus (Python) to Obtainium" height="54">
+  </a>
+</p>
 
 ## About Reticulum
 
