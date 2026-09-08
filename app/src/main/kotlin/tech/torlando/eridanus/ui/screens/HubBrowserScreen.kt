@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
@@ -67,6 +69,7 @@ fun HubBrowserScreen(
     val availableRooms by viewModel.availableRooms.collectAsState()
     var showManualDialog by remember { mutableStateOf(false) }
     var manualHash by remember { mutableStateOf("") }
+    var hubQuery by remember { mutableStateOf("") }
 
     val isConnected = clientState == tech.torlando.eridanus.rrc.ClientState.ACTIVE
     val isConnecting = clientState == tech.torlando.eridanus.rrc.ClientState.CONNECTING ||
@@ -211,59 +214,96 @@ fun HubBrowserScreen(
                     )
                 }
             } else {
-                val starred = discoveredHubs.filter { it.starred }
-                val unstarred = discoveredHubs.filter { !it.starred }
+                val filteredHubs = remember(discoveredHubs, hubQuery) {
+                    filterHubs(discoveredHubs, hubQuery)
+                }
+                val starred = filteredHubs.filter { it.starred }
+                val unstarred = filteredHubs.filter { !it.starred }
 
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (starred.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "Favorites",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(
-                                    start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp,
-                                ),
-                            )
+                OutlinedTextField(
+                    value = hubQuery,
+                    onValueChange = { hubQuery = it },
+                    label = { Text("Search hubs") },
+                    placeholder = { Text("Name or hash") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (hubQuery.isNotEmpty()) {
+                            IconButton(onClick = { hubQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                            }
                         }
-                        items(starred, key = { "starred_${it.hexHash}" }) { hub ->
-                            HubCard(
-                                hub = hub,
-                                isStarred = true,
-                                onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
-                                onConnect = { viewModel.connectToHub(hub.hash) },
-                                onRemove = { viewModel.removeHub(hub.hexHash) },
-                                connectEnabled = !isConnected && !isConnecting,
-                                connectLabel = if (isConnecting) "Connecting..." else "Connect",
-                            )
-                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+
+                if (filteredHubs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No hubs match “${hubQuery.trim()}”.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    if (unstarred.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = if (starred.isNotEmpty()) "Discovered" else "Discovered Hubs",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(
-                                    start = 16.dp, end = 16.dp,
-                                    top = if (starred.isNotEmpty()) 16.dp else 8.dp,
-                                    bottom = 4.dp,
-                                ),
-                            )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        if (starred.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Favorites",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(
+                                        start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp,
+                                    ),
+                                )
+                            }
+                            items(starred, key = { "starred_${it.hexHash}" }) { hub ->
+                                HubCard(
+                                    hub = hub,
+                                    isStarred = true,
+                                    onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
+                                    onConnect = { viewModel.connectToHub(hub.hash) },
+                                    onRemove = { viewModel.removeHub(hub.hexHash) },
+                                    connectEnabled = !isConnected && !isConnecting,
+                                    connectLabel = if (isConnecting) "Connecting..." else "Connect",
+                                )
+                            }
                         }
-                        items(unstarred, key = { "unstarred_${it.hexHash}" }) { hub ->
-                            HubCard(
-                                hub = hub,
-                                isStarred = false,
-                                onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
-                                onConnect = { viewModel.connectToHub(hub.hash) },
-                                onRemove = { viewModel.removeHub(hub.hexHash) },
-                                connectEnabled = !isConnected && !isConnecting,
-                                connectLabel = if (isConnecting) "Connecting..." else "Connect",
-                            )
+                        if (unstarred.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = if (starred.isNotEmpty()) "Discovered" else "Discovered Hubs",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(
+                                        start = 16.dp, end = 16.dp,
+                                        top = if (starred.isNotEmpty()) 16.dp else 8.dp,
+                                        bottom = 4.dp,
+                                    ),
+                                )
+                            }
+                            items(unstarred, key = { "unstarred_${it.hexHash}" }) { hub ->
+                                HubCard(
+                                    hub = hub,
+                                    isStarred = false,
+                                    onToggleStar = { viewModel.toggleHubStar(hub.hexHash) },
+                                    onConnect = { viewModel.connectToHub(hub.hash) },
+                                    onRemove = { viewModel.removeHub(hub.hexHash) },
+                                    connectEnabled = !isConnected && !isConnecting,
+                                    connectLabel = if (isConnecting) "Connecting..." else "Connect",
+                                )
+                            }
                         }
                     }
                 }
@@ -310,6 +350,26 @@ fun HubBrowserScreen(
             )
         }
     }
+}
+
+/**
+ * Filters the discovered-hub list by the browser's search query: a hub
+ * matches when its name OR its hex hash contains the query
+ * (case-insensitive, surrounding whitespace ignored). hexHash is already
+ * lower-case by construction, so the lowercasing only matters for name
+ * matches and hash-prefix queries typed in uppercase. Empty/blank query
+ * returns the list unchanged, so the Favorites/Discovered split the screen
+ * does afterwards is untouched in the unfiltered case.
+ *
+ * Visible-for-testing: unit-tested in HubSearchFilterTest.
+ */
+internal fun filterHubs(
+    hubs: List<tech.torlando.eridanus.viewmodel.DiscoveredHub>,
+    query: String,
+): List<tech.torlando.eridanus.viewmodel.DiscoveredHub> {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return hubs
+    return hubs.filter { it.name.lowercase().contains(q) || it.hexHash.contains(q) }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
