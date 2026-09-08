@@ -90,6 +90,24 @@ jobs:
           fi
           python scripts/verify_python_bridge.py "$MAPPING"
 
+      - name: Verify event_bridge restart-reset contract against pinned RNS
+        # The watchdog restart path relies on reticulum_reset_class_state()
+        # leaving every Transport class attr at the type RNS actually
+        # declares (RNS 1.5.x flipped discovery_pr_tags to a set — inbound()
+        # .add()s to it, so a stale list would AttributeError post-restart).
+        # This runs the reset against the REAL pinned wheel and fails CI on
+        # any type drift, so a future RNS bump can't silently reintroduce
+        # it. Pin is read from build.gradle.kts so the two can't diverge.
+        run: |
+          RNS_PIN=$(grep -oP 'install\("rns==\K[0-9.]+' eridanus-rns-backend-py/build.gradle.kts)
+          if [ -z "$RNS_PIN" ]; then
+            echo "ERROR: could not find rns== pin in eridanus-rns-backend-py/build.gradle.kts"
+            exit 1
+          fi
+          echo "Testing reset contract against rns==$RNS_PIN"
+          pip install "rns==$RNS_PIN"
+          python scripts/test_event_bridge_reset_contract.py
+
       - name: Confirm python flavor APK was produced
         run: |
           APK_PATH=$(find app/build/outputs/apk/python/release -name "*.apk" | head -1)
