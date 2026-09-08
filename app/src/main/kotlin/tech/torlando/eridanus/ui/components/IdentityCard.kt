@@ -34,6 +34,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -72,6 +73,7 @@ fun IdentityCard(
 ) {
     val context = LocalContext.current
     val hashHex by viewModel.clientIdentityHashHex.collectAsState()
+    val currentHash = hashHex
 
     var showKeyDialog by remember { mutableStateOf(false) }
 
@@ -149,11 +151,29 @@ fun IdentityCard(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(
-                        text = hashHex ?: "—",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = hashHex ?: "—",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Identity hash (address) is non-secret — safe to copy
+                        // into other Reticulum clients / Sideband. The button
+                        // consumes the tap so it doesn't toggle the card.
+                        if (currentHash != null) {
+                            IconButton(onClick = { copyAddressToClipboard(context, currentHash) }) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy address",
+                                )
+                            }
+                        }
+                    }
 
                     Text(
                         text = "Anyone with your identity key can impersonate you and " +
@@ -264,6 +284,12 @@ private fun DisplayKeyDialog(
 private fun copyToClipboard(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("Eridanus identity key", text))
+}
+
+private fun copyAddressToClipboard(context: Context, hash: String) {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    cm.setPrimaryClip(ClipData.newPlainText("Eridanus identity address", hash))
+    Toast.makeText(context, "Address copied to clipboard", Toast.LENGTH_SHORT).show()
 }
 
 private fun shareText(context: Context, text: String) {

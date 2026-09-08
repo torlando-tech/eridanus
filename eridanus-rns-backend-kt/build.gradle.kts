@@ -27,5 +27,5 @@ dependencies {
     // `implementation`, not `api` — eridanus app code MUST go through the
     // seam, not transitively pull in reticulum-kt symbols. This is the
     // architectural enforcer until the Detekt rule lands.
-    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.19")
+    implementation("com.github.torlando-tech.reticulum-kt:rns-android:v0.0.22")
 }

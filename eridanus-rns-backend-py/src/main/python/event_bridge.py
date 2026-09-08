@@ -225,7 +225,12 @@ def reticulum_reset_class_state():
         ("active_links", list),
         ("receipts", list),
         ("announce_handlers", list),
-        ("discovery_pr_tags", list),
+        # RNS >= 1.5.0 flipped discovery_pr_tags from a list to a set —
+        # Transport.inbound() now calls .add() on it, so a stale list left by
+        # the previous incarnation would AttributeError on the first
+        # post-restart inbound packet. _prev is 1.5.2's companion dedup set.
+        ("discovery_pr_tags", set),
+        ("discovery_pr_tags_prev", set),
         ("control_destinations", list),
         ("control_hashes", list),
         ("mgmt_destinations", list),
