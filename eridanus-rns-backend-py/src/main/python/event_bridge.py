@@ -25,7 +25,7 @@ signal.signal = lambda *args, **kwargs: None
 import RNS
 
 
-def announce_handler(kt_cb, aspect_filter=None):
+def announce_handler(kt_cb, aspect_filter=None, receive_path_responses=False):
     """Reticulum's Transport.register_announce_handler requires an object
     with `aspect_filter` and `received_announce(destination_hash,
     announced_identity, app_data)`. Wraps a Kotlin
@@ -38,14 +38,29 @@ def announce_handler(kt_cb, aspect_filter=None):
     announced_identity) (Transport.py:2046). None (the old behaviour) means
     EVERY announce on the network is delivered — which fed arbitrary foreign
     app_data (LXMF, NomadNet, …) into the app's CBOR decoder and could drive
-    a multi-GB allocation off a malformed length prefix."""
+    a multi-GB allocation off a malformed length prefix.
+
+    receive_path_responses opts in to PATH_RESPONSE-context announces — the
+    one-announce replies to Transport.request_path() for destinations never
+    seen on the network. The gate (Transport.py:2502-2504) drops path
+    responses for any handler without `receive_path_responses == True`;
+    without it a manually-entered hub hash only ever reaches us as a path
+    response and is silently lost (issue #42). RRC's hub-discovery handler
+    must opt in."""
     class _Handler:
+        # Class-level declarations for the attributes RNS's dispatch loop
+        # reads (aspect filter at Transport.py:2495, the path-response gate
+        # at Transport.py:2503). Assigned per-instance below.
+        aspect_filter: str | None = None
+        receive_path_responses: bool = False
+
         def received_announce(self, destination_hash, announced_identity, app_data):
             return bool(kt_cb.call(bytes(destination_hash),
                                    announced_identity,
                                    bytes(app_data) if app_data is not None else None))
     h = _Handler()
     h.aspect_filter = aspect_filter
+    h.receive_path_responses = receive_path_responses
     return h
 
 

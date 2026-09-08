@@ -831,8 +831,20 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             // filter the backend hands us EVERY announce on the network, and
             // decoding foreign (non-RRC) app_data as CBOR can drive the
             // decoder into a multi-GB allocation off a bogus length prefix.
+            //
+            // receivePathResponses=true is load-bearing (issue #42): a hub
+            // hash the user entered manually is only ever announced to us as
+            // the response to our own requestPath() — both RNS (python) and
+            // reticulum-kt drop PATH_RESPONSE packets for handlers that
+            // haven't opted in. Without this flag a manually-added hub never
+            // reached handleHubAnnounce, so it was never written to the
+            // discovered-hub table and "forgot" itself on the next restart.
             announceHandlerRegistration =
-                backend.transport.registerAnnounceHandler(RrcConstants.DEST_NAME, handler)
+                backend.transport.registerAnnounceHandler(
+                    aspectFilter = RrcConstants.DEST_NAME,
+                    handler = handler,
+                    receivePathResponses = true,
+                )
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)
@@ -882,6 +894,35 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Stamp the hub's self-reported name (from the RRC WELCOME handshake)
+     * onto its discovered-hubs row, if one exists.
+     *
+     * This is the reliable rename path for favourited hubs (issue #42):
+     * a manually-entered hash only ever produces a PATH_RESPONSE, and
+     * even the opt-in path-response announce only carries app_data when
+     * the path was actually built from a fresh announce. When the path is
+     * served from RNS's cached path table (reconnecting to a hub we've
+     * seen before) no announce arrives at all, so handleHubAnnounce never
+     * runs and the "Your Hub" placeholder from addHub() would persist
+     * forever. The WELCOME message arrives on *every* successful
+     * connection and carries the hub's real name from the hub itself —
+     * the most authoritative source we have.
+     *
+     * The star and any other row state are untouched (UPDATE name only),
+     * and an unknown hash (hub never added to the table) is a no-op.
+     */
+    private fun rememberHubNameFromWelcome(hubName: String?) {
+        val name = hubName?.trim()
+        if (name.isNullOrEmpty()) return
+        val hash = reconnectHubHash ?: return
+        val hexHash = hash.joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "Welcome rename: $hexHash -> '$name'")
+        viewModelScope.launch(Dispatchers.IO) {
+            hubDao.renameHub(hexHash, name)
+        }
+    }
+
     fun connectToHub(hubHash: ByteArray) {
         if (clientIdentity == null) return
         // Fresh user-driven connect: (re)arm the reconnect intent and drop
@@ -898,6 +939,37 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             prevReconnect?.cancelAndJoin()
             establishHubConnection(hubHash)
         }
+    }
+
+    /**
+     * Connect to a hub by user-entered hash, optionally remembering it.
+     *
+     * Seeds the discovered-hub table up front so the hub survives a restart
+     * even before the first path-response announce lands, and honors the
+     * "favorite" checkbox from the dialog (issue #42 — the user was
+     * re-pasting the same hash from a note because nothing they entered
+     * was ever written down). The star is set explicitly (unlike the
+     * announce path, which preserves the user's star): the checkbox always
+     * wins for the row, and re-adding an already-discovered hub keeps its
+     * real announced name.
+     *
+     * [hubHash] must already be a validated 16-byte truncated destination
+     * (see parseHexHash in HubBrowserScreen / OnboardingScreen) — this
+     * method re-derives the canonical lower-case hex from the bytes so the
+     * table key can't drift from the announced-hex the announce path
+     * stores.
+     */
+    fun addHub(hubHash: ByteArray, favorite: Boolean) {
+        val hexHash = hubHash.joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "addHub: $hexHash favorite=$favorite")
+        viewModelScope.launch(Dispatchers.IO) {
+            // Placeholder name — the real hub name replaces it via the
+            // WELCOME handshake (rememberHubNameFromWelcome) on every
+            // successful connect, or earlier if a path-response / periodic
+            // announce with app_data is decoded first (handleHubAnnounce).
+            hubDao.upsertHub(hexHash, hubHash, "Your Hub", System.currentTimeMillis(), favorite)
+        }
+        connectToHub(hubHash)
     }
 
     /**
@@ -1420,6 +1492,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                 Log.i(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
+                rememberHubNameFromWelcome(event.hubName)
                 Log.i(TAG, "Requesting room list after welcome")
                 requestRoomList()
             }
