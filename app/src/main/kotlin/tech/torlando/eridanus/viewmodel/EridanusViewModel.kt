@@ -205,6 +205,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     // Client state
     private var clientEventJob: kotlinx.coroutines.Job? = null
     private var rrcClient: RrcClient? = null
+    // Serializes connectToHub start sequences (see connectToHub) so rapid
+    // picks always arm reconnect intent + establish links in selection
+    // order. Non-reentrant is fine: nothing under the lock calls back into
+    // connectToHub.
+    private val connectStartMutex = Mutex()
     private val _clientState = MutableStateFlow(tech.torlando.eridanus.rrc.ClientState.DISCONNECTED)
     val clientState: StateFlow<tech.torlando.eridanus.rrc.ClientState> = _clientState
 
@@ -931,19 +936,29 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     fun connectToHub(hubHash: ByteArray) {
         if (clientIdentity == null) return
-        // Fresh user-driven connect: (re)arm the reconnect intent and drop
-        // any stale rejoin state from a previous hub.
-        intentionalDisconnect = false
-        reconnectHubHash = hubHash.copyOf()
-        sessionRoomKeys.clear()
-        roomsToRejoin = emptyList()
-        val prevReconnect = reconnectJob
-        reconnectJob = null
         viewModelScope.launch(Dispatchers.IO) {
-            // Fully stop any in-flight auto-reconnect loop before we build
-            // the new connection, so the two don't race over rrcClient.
-            prevReconnect?.cancelAndJoin()
-            establishHubConnection(hubHash)
+            // Serialize connection STARTS (Greptile P1): the arm block below
+            // and establishHubConnection's old-link teardown must be atomic
+            // per request, in the order the user picked them. Without this,
+            // two rapid manual entries (the dialog stays open during a
+            // connection) could establish out of order — the older request
+            // finishing last would overwrite reconnectHubHash and leave the
+            // app attached to the previously chosen hub.
+            connectStartMutex.withLock {
+                // Fresh user-driven connect: (re)arm the reconnect intent and
+                // drop any stale rejoin state from a previous hub.
+                intentionalDisconnect = false
+                reconnectHubHash = hubHash.copyOf()
+                sessionRoomKeys.clear()
+                roomsToRejoin = emptyList()
+                val prevReconnect = reconnectJob
+                reconnectJob = null
+                // Fully stop any in-flight auto-reconnect loop before we
+                // build the new connection, so the two don't race over
+                // rrcClient.
+                prevReconnect?.cancelAndJoin()
+                establishHubConnection(hubHash)
+            }
         }
     }
 
