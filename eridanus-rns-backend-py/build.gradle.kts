@@ -42,7 +42,7 @@ chaquopy {
         // chaquopy 17.
         version = "3.12"
 
-        // pip-install upstream Reticulum from PyPI (pinned to 1.2.5). We
+        // pip-install upstream Reticulum from PyPI (pinned to 1.5.2). We
         // also install PyCA `cryptography` — a native wheel from Chaquopy's
         // prebuilt package repo — so RNS uses fast native crypto via
         // RNS/Cryptography/Provider.py instead of its slow pure-python
@@ -55,7 +55,7 @@ chaquopy {
         // python APK is actually smaller despite adding native crypto, and
         // there's no submodule for CI/contributors to init.
         pip {
-            install("rns==1.2.5")
+            install("rns==1.5.2")
             install("cryptography>=42.0.0")
         }
     }

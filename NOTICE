@@ -24,7 +24,7 @@ Python flavor  —  eridanus-python-*.apk
 
 Bundles the upstream reference implementation of Reticulum (the Python
 RNS, https://github.com/markqvist/Reticulum), pip-installed at build
-time via Chaquopy — pinned to `rns==1.2.5` in
+time via Chaquopy — pinned to `rns==1.5.2` in
 eridanus-rns-backend-py/build.gradle.kts. It is licensed under the
 **Reticulum License** — see the LICENSE file at the root of the
 upstream Reticulum repository for the authoritative text. The

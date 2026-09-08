@@ -10,8 +10,8 @@ interface RnsBackend {
     /**
      * Human-readable version of the embedded Reticulum stack, for display in
      * the About card. The python flavor reports upstream RNS's runtime
-     * `__version__` (e.g. "1.2.5"); the kotlin flavor reports the bundled
-     * reticulum-kt coordinate (e.g. "v0.0.19 (reticulum-kt)").
+     * `__version__` (e.g. "1.5.2"); the kotlin flavor reports the bundled
+     * reticulum-kt coordinate (e.g. "v0.0.22 (reticulum-kt)").
      */
     val reticulumVersion: String
 

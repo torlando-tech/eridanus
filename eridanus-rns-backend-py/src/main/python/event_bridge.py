@@ -196,6 +196,44 @@ def reticulum_shutdown(reticulum):
     reticulum_reset_class_state()
 
 
+# Class-level Transport state that RNS populates on init and never resets,
+# mapped to the factory type the reset must leave it as. RNS 1.5.x is the
+# first release where any of these are NOT lists — discovery_pr_tags /
+# _prev are sets (Transport.inbound() calls .add() on them). scripts/
+# test_event_bridge_reset_contract.py verifies every entry against the
+# real pinned RNS version so a future bump that changes a type fails CI
+# instead of shipping an AttributeError into the post-restart inbound path.
+TRANSPORT_CLASS_STATE = (
+    ("interfaces", list),
+    ("destinations", list),
+    ("pending_links", list),
+    ("active_links", list),
+    ("receipts", list),
+    ("announce_handlers", list),
+    ("discovery_pr_tags", set),
+    ("discovery_pr_tags_prev", set),
+    ("control_destinations", list),
+    ("control_hashes", list),
+    ("mgmt_destinations", list),
+    ("mgmt_hashes", list),
+    ("remote_management_allowed", list),
+    ("local_client_interfaces", list),
+    ("local_client_rssi_cache", list),
+    ("local_client_snr_cache", list),
+    ("local_client_q_cache", list),
+    # The persistent learned-network tables (path_table, announce_table,
+    # held_announces, blackholed_identities, tunnels) are reloaded from
+    # storage by Transport.start; we just need their in-memory copies
+    # cleared so the load happens fresh.
+    ("path_table", dict),
+    ("announce_table", dict),
+    ("held_announces", dict),
+    ("blackholed_identities", dict),
+    ("tunnels", dict),
+    ("packet_hashlist", set),
+)
+
+
 def reticulum_reset_class_state():
     """Clear class-level state that RNS / Transport / Identity populate
     on init and never reset. Without this, the second
@@ -213,39 +251,13 @@ def reticulum_reset_class_state():
     setattr(RNS.Reticulum, "_Reticulum__interface_detach_ran", False)
 
     # Transport is a static class — all state lives on the class itself.
-    # The lists below are everything Transport.start() expects to start
-    # empty.
+    # TRANSPORT_CLASS_STATE is everything Transport.start() expects to
+    # start empty (see that constant's comment for the RNS 1.5.x set
+    # types — those are load-bearing, not cosmetic).
     T = RNS.Transport
     T.owner = None
     T.identity = None
-    for attr, default in (
-        ("interfaces", list),
-        ("destinations", list),
-        ("pending_links", list),
-        ("active_links", list),
-        ("receipts", list),
-        ("announce_handlers", list),
-        ("discovery_pr_tags", list),
-        ("control_destinations", list),
-        ("control_hashes", list),
-        ("mgmt_destinations", list),
-        ("mgmt_hashes", list),
-        ("remote_management_allowed", list),
-        ("local_client_interfaces", list),
-        ("local_client_rssi_cache", list),
-        ("local_client_snr_cache", list),
-        ("local_client_q_cache", list),
-        # The persistent learned-network tables (path_table, announce_table,
-        # held_announces, blackholed_identities, tunnels) are reloaded from
-        # storage by Transport.start; we just need their in-memory copies
-        # cleared so the load happens fresh.
-        ("path_table", dict),
-        ("announce_table", dict),
-        ("held_announces", dict),
-        ("blackholed_identities", dict),
-        ("tunnels", dict),
-        ("packet_hashlist", set),
-    ):
+    for attr, default in TRANSPORT_CLASS_STATE:
         if hasattr(T, attr):
             setattr(T, attr, default())
 

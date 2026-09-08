@@ -8,6 +8,9 @@
 /eridanus-rns-api/build
 /eridanus-rns-backend-kt/build
 /eridanus-rns-backend-py/build
+
+# Python
+__pycache__/
 /captures
 .externalNativeBuild
 .cxx

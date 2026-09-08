@@ -149,7 +149,7 @@ private fun InfoSection(
 @Composable
 private fun InfoRow(label: String, value: String) {
     // Label takes its natural width; value takes the rest and right-aligns,
-    // so a long value (e.g. "v0.0.19 (reticulum-kt)" or a long device model)
+    // so a long value (e.g. "v0.0.22 (reticulum-kt)" or a long device model)
     // wraps in its column instead of colliding with the label.
     Row(
         modifier = Modifier.fillMaxWidth(),
