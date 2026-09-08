@@ -909,13 +909,19 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
      * connection and carries the hub's real name from the hub itself —
      * the most authoritative source we have.
      *
+     * [destHash] is the destination the emitting client's collector
+     * captured at connect time — NOT the live [reconnectHubHash], which
+     * can already point at a different hub by the time a late WELCOME
+     * from the previous client lands (see the capture in
+     * [establishHubConnection]).
+     *
      * The star and any other row state are untouched (UPDATE name only),
      * and an unknown hash (hub never added to the table) is a no-op.
      */
-    private fun rememberHubNameFromWelcome(hubName: String?) {
+    private fun rememberHubNameFromWelcome(hubName: String?, destHash: ByteArray?) {
         val name = hubName?.trim()
         if (name.isNullOrEmpty()) return
-        val hash = reconnectHubHash ?: return
+        val hash = destHash ?: return
         val hexHash = hash.joinToString("") { "%02x".format(it) }
         Log.i(TAG, "Welcome rename: $hexHash -> '$name'")
         viewModelScope.launch(Dispatchers.IO) {
@@ -962,14 +968,19 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     fun addHub(hubHash: ByteArray, favorite: Boolean) {
         val hexHash = hubHash.joinToString("") { "%02x".format(it) }
         Log.i(TAG, "addHub: $hexHash favorite=$favorite")
+        // Seed the row and only then start connecting: the WELCOME rename
+        // (rememberHubNameFromWelcome) UPDATEs the row by hash, so on a
+        // fast cached-path connection the insert must be committed first
+        // or the rename updates zero rows and the "Your Hub" placeholder
+        // survives the first connect.
         viewModelScope.launch(Dispatchers.IO) {
             // Placeholder name — the real hub name replaces it via the
             // WELCOME handshake (rememberHubNameFromWelcome) on every
             // successful connect, or earlier if a path-response / periodic
             // announce with app_data is decoded first (handleHubAnnounce).
             hubDao.upsertHub(hexHash, hubHash, "Your Hub", System.currentTimeMillis(), favorite)
+            connectToHub(hubHash)
         }
-        connectToHub(hubHash)
     }
 
     /**
@@ -993,8 +1004,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
         rrcClient = client
         _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
+        // Capture the destination this collector belongs to, not a live
+        // lookup: the user can start connecting to a *different* hub while
+        // this connection is still settling, and connectToHub() rewrites
+        // reconnectHubHash before this job is cancelled. An in-flight
+        // WELCOME from the old client must be attributed to the hash it
+        // actually connected to, or it would rename the wrong row.
+        val destHash = hubHash
         clientEventJob = viewModelScope.launch(Dispatchers.IO) {
-            client.events.collect { event -> handleRrcEvent(event) }
+            client.events.collect { event -> handleRrcEvent(event, destHash) }
         }
 
         return try {
@@ -1392,7 +1410,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
                 clientEventJob = launch {
                     client.events.collect { event ->
-                        handleRrcEvent(event)
+                        handleRrcEvent(event, null)
                     }
                 }
 
@@ -1486,13 +1504,13 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun handleRrcEvent(event: RrcEvent) {
+    private fun handleRrcEvent(event: RrcEvent, destHash: ByteArray? = null) {
         when (event) {
             is RrcEvent.Welcome -> {
                 Log.i(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
-                rememberHubNameFromWelcome(event.hubName)
+                rememberHubNameFromWelcome(event.hubName, destHash)
                 Log.i(TAG, "Requesting room list after welcome")
                 requestRoomList()
             }
