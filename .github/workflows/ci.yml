@@ -90,23 +90,35 @@ jobs:
           fi
           python scripts/verify_python_bridge.py "$MAPPING"
 
-      - name: Verify event_bridge restart-reset contract against pinned RNS
-        # The watchdog restart path relies on reticulum_reset_class_state()
-        # leaving every Transport class attr at the type RNS actually
-        # declares (RNS 1.5.x flipped discovery_pr_tags to a set — inbound()
-        # .add()s to it, so a stale list would AttributeError post-restart).
-        # This runs the reset against the REAL pinned wheel and fails CI on
-        # any type drift, so a future RNS bump can't silently reintroduce
-        # it. Pin is read from build.gradle.kts so the two can't diverge.
+      - name: Verify event_bridge contracts against pinned RNS
+        # Two restart/discovery contracts the python flavor relies on, both
+        # run against the REAL pinned wheel so a future RNS bump that
+        # changes a type or renames an attribute fails CI instead of
+        # shipping a silent regression. Pin is read from build.gradle.kts
+        # so the two can't diverge.
+        #
+        # 1. Restart-reset: the watchdog restart path relies on
+        #    reticulum_reset_class_state() leaving every Transport class
+        #    attr at the type RNS actually declares (RNS 1.5.x flipped
+        #    discovery_pr_tags to a set — inbound() .add()s to it, so a
+        #    stale list would AttributeError post-restart).
+        #
+        # 2. Path-response opt-in: a manually-entered hub hash is ONLY
+        #    ever announced to the app as a PATH_RESPONSE reply to its own
+        #    request_path(); RNS drops those for any handler without
+        #    receive_path_responses == True (issue #42 — "the app forgets
+        #    the hub"). event_bridge.announce_handler must keep that
+        #    attribute set when the kotlin backend asks for path responses.
         run: |
           RNS_PIN=$(grep -oP 'install\("rns==\K[0-9.]+' eridanus-rns-backend-py/build.gradle.kts)
           if [ -z "$RNS_PIN" ]; then
             echo "ERROR: could not find rns== pin in eridanus-rns-backend-py/build.gradle.kts"
             exit 1
           fi
-          echo "Testing reset contract against rns==$RNS_PIN"
+          echo "Testing event_bridge contracts against rns==$RNS_PIN"
           pip install "rns==$RNS_PIN"
           python scripts/test_event_bridge_reset_contract.py
+          python scripts/test_event_bridge_path_response_contract.py
 
       - name: Confirm python flavor APK was produced
         run: |

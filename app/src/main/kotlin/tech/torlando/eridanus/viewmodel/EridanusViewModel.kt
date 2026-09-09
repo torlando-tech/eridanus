@@ -205,6 +205,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
     // Client state
     private var clientEventJob: kotlinx.coroutines.Job? = null
     private var rrcClient: RrcClient? = null
+    // Serializes connectToHub start sequences (see connectToHub) so rapid
+    // picks always arm reconnect intent + establish links in selection
+    // order. Non-reentrant is fine: nothing under the lock calls back into
+    // connectToHub.
+    private val connectStartMutex = Mutex()
     private val _clientState = MutableStateFlow(tech.torlando.eridanus.rrc.ClientState.DISCONNECTED)
     val clientState: StateFlow<tech.torlando.eridanus.rrc.ClientState> = _clientState
 
@@ -831,8 +836,20 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             // filter the backend hands us EVERY announce on the network, and
             // decoding foreign (non-RRC) app_data as CBOR can drive the
             // decoder into a multi-GB allocation off a bogus length prefix.
+            //
+            // receivePathResponses=true is load-bearing (issue #42): a hub
+            // hash the user entered manually is only ever announced to us as
+            // the response to our own requestPath() — both RNS (python) and
+            // reticulum-kt drop PATH_RESPONSE packets for handlers that
+            // haven't opted in. Without this flag a manually-added hub never
+            // reached handleHubAnnounce, so it was never written to the
+            // discovered-hub table and "forgot" itself on the next restart.
             announceHandlerRegistration =
-                backend.transport.registerAnnounceHandler(RrcConstants.DEST_NAME, handler)
+                backend.transport.registerAnnounceHandler(
+                    aspectFilter = RrcConstants.DEST_NAME,
+                    handler = handler,
+                    receivePathResponses = true,
+                )
             Log.d(TAG, "Announce handler registered for ${RrcConstants.DEST_NAME}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register announce handler", e)
@@ -882,21 +899,102 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Stamp the hub's self-reported name (from the RRC WELCOME handshake)
+     * onto its discovered-hubs row, if one exists.
+     *
+     * This is the reliable rename path for favourited hubs (issue #42):
+     * a manually-entered hash only ever produces a PATH_RESPONSE, and
+     * even the opt-in path-response announce only carries app_data when
+     * the path was actually built from a fresh announce. When the path is
+     * served from RNS's cached path table (reconnecting to a hub we've
+     * seen before) no announce arrives at all, so handleHubAnnounce never
+     * runs and the "Your Hub" placeholder from addHub() would persist
+     * forever. The WELCOME message arrives on *every* successful
+     * connection and carries the hub's real name from the hub itself —
+     * the most authoritative source we have.
+     *
+     * [destHash] is the destination the emitting client's collector
+     * captured at connect time — NOT the live [reconnectHubHash], which
+     * can already point at a different hub by the time a late WELCOME
+     * from the previous client lands (see the capture in
+     * [establishHubConnection]).
+     *
+     * The star and any other row state are untouched (UPDATE name only),
+     * and an unknown hash (hub never added to the table) is a no-op.
+     */
+    private fun rememberHubNameFromWelcome(hubName: String?, destHash: ByteArray?) {
+        val name = hubName?.trim()
+        if (name.isNullOrEmpty()) return
+        val hash = destHash ?: return
+        val hexHash = hash.joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "Welcome rename: $hexHash -> '$name'")
+        viewModelScope.launch(Dispatchers.IO) {
+            hubDao.renameHub(hexHash, name)
+        }
+    }
+
     fun connectToHub(hubHash: ByteArray) {
         if (clientIdentity == null) return
-        // Fresh user-driven connect: (re)arm the reconnect intent and drop
-        // any stale rejoin state from a previous hub.
-        intentionalDisconnect = false
-        reconnectHubHash = hubHash.copyOf()
-        sessionRoomKeys.clear()
-        roomsToRejoin = emptyList()
-        val prevReconnect = reconnectJob
-        reconnectJob = null
         viewModelScope.launch(Dispatchers.IO) {
-            // Fully stop any in-flight auto-reconnect loop before we build
-            // the new connection, so the two don't race over rrcClient.
-            prevReconnect?.cancelAndJoin()
-            establishHubConnection(hubHash)
+            // Serialize connection STARTS (Greptile P1): the arm block below
+            // and establishHubConnection's old-link teardown must be atomic
+            // per request, in the order the user picked them. Without this,
+            // two rapid manual entries (the dialog stays open during a
+            // connection) could establish out of order — the older request
+            // finishing last would overwrite reconnectHubHash and leave the
+            // app attached to the previously chosen hub.
+            connectStartMutex.withLock {
+                // Fresh user-driven connect: (re)arm the reconnect intent and
+                // drop any stale rejoin state from a previous hub.
+                intentionalDisconnect = false
+                reconnectHubHash = hubHash.copyOf()
+                sessionRoomKeys.clear()
+                roomsToRejoin = emptyList()
+                val prevReconnect = reconnectJob
+                reconnectJob = null
+                // Fully stop any in-flight auto-reconnect loop before we
+                // build the new connection, so the two don't race over
+                // rrcClient.
+                prevReconnect?.cancelAndJoin()
+                establishHubConnection(hubHash)
+            }
+        }
+    }
+
+    /**
+     * Connect to a hub by user-entered hash, optionally remembering it.
+     *
+     * Seeds the discovered-hub table up front so the hub survives a restart
+     * even before the first path-response announce lands, and honors the
+     * "favorite" checkbox from the dialog (issue #42 — the user was
+     * re-pasting the same hash from a note because nothing they entered
+     * was ever written down). The star is set explicitly (unlike the
+     * announce path, which preserves the user's star): the checkbox always
+     * wins for the row, and re-adding an already-discovered hub keeps its
+     * real announced name.
+     *
+     * [hubHash] must already be a validated 16-byte truncated destination
+     * (see parseHexHash in HubBrowserScreen / OnboardingScreen) — this
+     * method re-derives the canonical lower-case hex from the bytes so the
+     * table key can't drift from the announced-hex the announce path
+     * stores.
+     */
+    fun addHub(hubHash: ByteArray, favorite: Boolean) {
+        val hexHash = hubHash.joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "addHub: $hexHash favorite=$favorite")
+        // Seed the row and only then start connecting: the WELCOME rename
+        // (rememberHubNameFromWelcome) UPDATEs the row by hash, so on a
+        // fast cached-path connection the insert must be committed first
+        // or the rename updates zero rows and the "Your Hub" placeholder
+        // survives the first connect.
+        viewModelScope.launch(Dispatchers.IO) {
+            // Placeholder name — the real hub name replaces it via the
+            // WELCOME handshake (rememberHubNameFromWelcome) on every
+            // successful connect, or earlier if a path-response / periodic
+            // announce with app_data is decoded first (handleHubAnnounce).
+            hubDao.upsertHub(hexHash, hubHash, "Your Hub", System.currentTimeMillis(), favorite)
+            connectToHub(hubHash)
         }
     }
 
@@ -921,8 +1019,15 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         val client = RrcClient(id, backend, nickname = nickname.value.ifEmpty { null })
         rrcClient = client
         _clientState.value = tech.torlando.eridanus.rrc.ClientState.CONNECTING
+        // Capture the destination this collector belongs to, not a live
+        // lookup: the user can start connecting to a *different* hub while
+        // this connection is still settling, and connectToHub() rewrites
+        // reconnectHubHash before this job is cancelled. An in-flight
+        // WELCOME from the old client must be attributed to the hash it
+        // actually connected to, or it would rename the wrong row.
+        val destHash = hubHash
         clientEventJob = viewModelScope.launch(Dispatchers.IO) {
-            client.events.collect { event -> handleRrcEvent(event) }
+            client.events.collect { event -> handleRrcEvent(event, destHash) }
         }
 
         return try {
@@ -1320,7 +1425,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
                 clientEventJob = launch {
                     client.events.collect { event ->
-                        handleRrcEvent(event)
+                        handleRrcEvent(event, null)
                     }
                 }
 
@@ -1414,12 +1519,13 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun handleRrcEvent(event: RrcEvent) {
+    private fun handleRrcEvent(event: RrcEvent, destHash: ByteArray? = null) {
         when (event) {
             is RrcEvent.Welcome -> {
                 Log.i(TAG, "Welcome: hubName=${event.hubName}")
                 _clientState.value = tech.torlando.eridanus.rrc.ClientState.ACTIVE
                 _connectedHubName.value = event.hubName
+                rememberHubNameFromWelcome(event.hubName, destHash)
                 Log.i(TAG, "Requesting room list after welcome")
                 requestRoomList()
             }

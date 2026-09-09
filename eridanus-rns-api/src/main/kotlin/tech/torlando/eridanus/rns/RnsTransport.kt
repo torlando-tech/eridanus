@@ -44,9 +44,21 @@ interface RnsTransport {
      * arbitrary foreign app_data (LXMF, NomadNet, …), and a malformed length
      * prefix can drive the CBOR decoder into a multi-GB allocation. Always
      * pass the specific aspect unless you genuinely want the firehose.
+     *
+     * [receivePathResponses] opts the handler in for PATH_RESPONSE-context
+     * announces — the one-announce replies a `requestPath()` gets for a
+     * destination never seen on the network. Both backends mirror the
+     * upstream gate (RNS Transport.py:2502-2504 / reticulum-kt
+     * `RichAnnounceHandler.receivePathResponses`, both defaulting to NOT
+     * receive them): with the flag false the handler still gets live
+     * periodic announces but misses the path response entirely. RRC must
+     * opt in — a manually-entered hub hash is ONLY ever announced to us as
+     * a path response, and without it the hub never reaches the
+     * discovered-hub list / favorites.
      */
     fun registerAnnounceHandler(
         aspectFilter: String?,
         handler: RnsAnnounceHandler,
+        receivePathResponses: Boolean = false,
     ): RnsAnnounceHandlerRegistration
 }

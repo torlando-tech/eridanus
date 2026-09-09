@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,6 +70,8 @@ fun HubBrowserScreen(
     val availableRooms by viewModel.availableRooms.collectAsState()
     var showManualDialog by remember { mutableStateOf(false) }
     var manualHash by remember { mutableStateOf("") }
+    var manualFavorite by remember { mutableStateOf(false) }
+    var manualError by remember { mutableStateOf<String?>(null) }
     var hubQuery by remember { mutableStateOf("") }
 
     val isConnected = clientState == tech.torlando.eridanus.rrc.ClientState.ACTIVE
@@ -315,24 +318,54 @@ fun HubBrowserScreen(
                 onDismissRequest = {
                     showManualDialog = false
                     manualHash = ""
+                    manualFavorite = false
+                    manualError = null
                 },
                 title = { Text("Connect to Hub") },
                 text = {
-                    OutlinedTextField(
-                        value = manualHash,
-                        onValueChange = { manualHash = it },
-                        label = { Text("Hub destination hash (hex)") },
-                        singleLine = true,
-                    )
+                    Column {
+                        OutlinedTextField(
+                            value = manualHash,
+                            onValueChange = { manualHash = it },
+                            label = { Text("Hub destination hash (hex)") },
+                            singleLine = true,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = manualFavorite,
+                                onCheckedChange = { manualFavorite = it },
+                            )
+                            Text(
+                                text = "Save as favorite",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        manualError?.let { err ->
+                            Text(
+                                text = err,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             val hash = parseHexHash(manualHash.trim())
                             if (hash != null) {
-                                viewModel.connectToHub(hash)
+                                // addHub also seeds the discovered-hub table
+                                // (favorite flag honored) so the hub is
+                                // remembered across restarts — issue #42.
+                                viewModel.addHub(hash, manualFavorite)
                                 showManualDialog = false
                                 manualHash = ""
+                                manualFavorite = false
+                                manualError = null
+                            } else {
+                                manualError = "That doesn't look like a hub hash — " +
+                                    "expected 32 hex characters (16 bytes)."
                             }
                         },
                     ) {
@@ -343,6 +376,8 @@ fun HubBrowserScreen(
                     TextButton(onClick = {
                         showManualDialog = false
                         manualHash = ""
+                        manualFavorite = false
+                        manualError = null
                     }) {
                         Text("Cancel")
                     }
@@ -478,12 +513,19 @@ private fun formatLastHeard(lastSeen: Long): String {
     }
 }
 
-private fun parseHexHash(hex: String): ByteArray? {
+/**
+ * Parses a user-entered hub destination hash (hex, optional spaces /
+ * colon separators, case-insensitive) into 16 bytes. Returns null for
+ * anything that is not exactly a 32-char hex string after cleaning —
+ * RNS identity hashes are truncated to 128 bits
+ * (RNS.Identity.TRUNCATED_HASHLENGTH), so a hub hash is 32 hex
+ * characters. Rejecting other lengths early keeps the manual "Enter
+ * Hash" dialog from connecting to a truncated (or full-256-bit) hash.
+ *
+ * Visible-for-testing: unit-tested in HubHashParseTest.
+ */
+internal fun parseHexHash(hex: String): ByteArray? {
     val cleaned = hex.replace(" ", "").replace(":", "").lowercase()
-    if (cleaned.length % 2 != 0 || cleaned.isEmpty()) return null
-    return try {
-        cleaned.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-    } catch (_: NumberFormatException) {
-        null
-    }
+    if (cleaned.length != 32 || !cleaned.all { it in "0123456789abcdef" }) return null
+    return cleaned.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

@@ -51,6 +51,7 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
     override fun registerAnnounceHandler(
         aspectFilter: String?,
         handler: RnsAnnounceHandler,
+        receivePathResponses: Boolean,
     ): RnsAnnounceHandlerRegistration {
         val ktCb = PyAnnounceCallback { destHash, announcedIdentity, appData ->
             // The PyObject for the announced identity might be useful to
@@ -66,7 +67,7 @@ class PyRnsTransport(private val rns: PyObject) : RnsTransport {
         // see RnsTransport.registerAnnounceHandler. RNS keys
         // deregister_announce_handler on the exact object, so the returned
         // token closes over `pyHandler`.
-        val pyHandler = bridge.callAttr("announce_handler", ktCb, aspectFilter)
+        val pyHandler = bridge.callAttr("announce_handler", ktCb, aspectFilter, receivePathResponses)
         rns.get("Transport")!!.callAttr("register_announce_handler", pyHandler)
         return RnsAnnounceHandlerRegistration {
             rns.get("Transport")!!.callAttr("deregister_announce_handler", pyHandler)
