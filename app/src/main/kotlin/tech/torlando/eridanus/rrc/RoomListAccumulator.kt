@@ -160,6 +160,17 @@ class RoomListAccumulator(
             val stale = nowElapsedMillis - lastLineAtMillis > timeoutMillis
             val room = RrcListParse.parseRoomLine(body, legacy)
             if (!stale && room != null) {
+                if (rooms.size >= RrcListParse.MAX_ROOMS) {
+                    // Hostile or malfunctioning hub streaming room lines
+                    // forever: abort, publish what we have, drop the line.
+                    val finalRooms = rooms.toList()
+                    val storedHeader = headerBody
+                    active = false
+                    rooms.clear()
+                    legacy = false
+                    headerBody = null
+                    return Step.Closed(finalRooms, storedHeader, bodyConsumed = false)
+                }
                 rooms.add(room)
                 lastLineAtMillis = nowElapsedMillis
                 return Step.Accumulated(rooms.toList())

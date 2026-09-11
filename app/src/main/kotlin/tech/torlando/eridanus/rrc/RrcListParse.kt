@@ -32,6 +32,16 @@ object RrcListParse {
     /** Per-line staleness window for the per-room NOTICE shape (seconds). */
     const val LINE_TIMEOUT_MS = 15_000L
 
+    /**
+     * Hard cap on rooms accumulated from per-room NOTICEs. A connected
+     * malicious or malfunctioning hub could otherwise keep the accumulator
+     * alive indefinitely by streaming valid indented notices < 15 s apart,
+     * growing the list (and each `toList()` copy) without bound. No public
+     * hub comes anywhere near this many rooms; a list that exceeds it is
+     * treated as hostile/corrupt and aborted (published so far).
+     */
+    const val MAX_ROOMS = 500
+
     private val MEMBER_COUNT = Regex("""\s*\(\d+ members?\)""")
 
     /**

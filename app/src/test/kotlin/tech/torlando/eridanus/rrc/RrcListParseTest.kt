@@ -349,4 +349,28 @@ class RrcListParseTest {
         assertEquals(listOf(room("general")), closed.rooms)
         assertTrue("foreign closer must be reprocessed by the caller", closed.passThroughBody)
     }
+
+    @Test
+    fun `oversized stream is aborted at the room cap`() {
+        // A hostile/malfunctioning hub streaming valid room lines forever
+        // must not grow the list without bound: at MAX_ROOMS the list is
+        // aborted, the published rooms are capped, and the list closes.
+        val acc = makeAccumulator()
+        acc.feed("Registered public rooms:", 0L)
+        val cap = RrcListParse.MAX_ROOMS
+        for (i in 1 until cap) {
+            val updated = acc.feed("  room$i - topic", i.toLong()) as RoomListAccumulator.FeedResult.Updated
+            assertEquals(i, updated.rooms.size)
+        }
+        // Line cap+1 (room$cap) fills the list exactly.
+        val full = acc.feed("  room$cap - topic", cap.toLong()) as RoomListAccumulator.FeedResult.Updated
+        assertEquals(cap, full.rooms.size)
+        // One more line: the cap is hit — abort, publish so far, drop it.
+        val aborted = acc.feed("  room${cap + 1} - topic", (cap + 1).toLong()) as RoomListAccumulator.FeedResult.ListComplete
+        assertEquals(cap, aborted.rooms.size)
+        assertFalse("aborted line must not be reprocessed as a notice", aborted.passThroughBody)
+        assertFalse(acc.isActive)
+        // The accumulator is fully closed; further room lines are unrelated.
+        assertEquals(RoomListAccumulator.FeedResult.Unrelated, acc.feed("  room${cap + 2} - topic", (cap + 2).toLong()))
+    }
 }
