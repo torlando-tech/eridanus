@@ -3,6 +3,7 @@
 package tech.torlando.eridanus.viewmodel
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,6 +47,8 @@ import tech.torlando.eridanus.data.db.HubEntity
 import tech.torlando.eridanus.rrc.RrcClient
 import tech.torlando.eridanus.rrc.RrcConstants
 import tech.torlando.eridanus.rrc.RrcEvent
+import tech.torlando.eridanus.rrc.RrcListParse
+import tech.torlando.eridanus.rrc.RoomListAccumulator
 import tech.torlando.eridanus.util.Base32
 import tech.torlando.eridanus.rrc.RrcHub
 import tech.torlando.eridanus.ui.theme.PresetTheme
@@ -259,6 +262,11 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
 
     private val _availableRooms = MutableStateFlow<List<AvailableRoom>>(emptyList())
     val availableRooms: StateFlow<List<AvailableRoom>> = _availableRooms
+
+    // Hubs send the `/list` header and each room as SEPARATE notices
+    // (rnscommunity hub, 2026-09); the accumulator stitches them back into
+    // a room list (see RoomListAccumulator / RrcListParse).
+    private val roomListAccumulator = RoomListAccumulator()
 
     private val _hubGreetingMessage = MutableStateFlow<String?>(null)
     val hubGreetingMessage: StateFlow<String?> = _hubGreetingMessage
@@ -1197,6 +1205,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             _roomMemberCounts.value = emptyMap()
             _roomMemberList.value = emptyMap()
             _hubGreetingMessage.value = null
+            roomListAccumulator.clear()
         }
     }
 
@@ -1622,33 +1631,34 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
             is RrcEvent.NoticeReceived -> {
                 Log.i(TAG, "NoticeReceived: room=${event.room} body='${event.body}'")
                 if (event.room == null) {
-                    // Parse room list from either Ara hub ("Registered public rooms:")
-                    // or Python rrc-nomadnet hub ("Rooms:")
-                    if (event.body.startsWith("Registered public rooms:") ||
-                        event.body.startsWith("Rooms:")
-                    ) {
-                        val rooms = event.body.lines().drop(1).mapNotNull { line ->
-                            val trimmed = line.trim()
-                            if (trimmed.isEmpty()) return@mapNotNull null
-                            // Python hub format: "lobby (2 members) - General chat"
-                            // Ara hub format:    "lobby - General chat"
-                            // Strip "(N members)" if present
-                            val stripped = trimmed.replace(Regex("""\s*\(\d+ members?\)"""), "")
-                            val parts = stripped.split(" - ", limit = 2)
-                            AvailableRoom(
-                                name = parts[0].trim(),
-                                topic = parts.getOrNull(1)?.trim(),
-                            )
+                    // Room lists arrive as hub text conventions, in one of two
+                    // shapes (see RrcListParse): a single multi-line notice
+                    // (older rrcd / Eridanus's own hub) or a header NOTICE
+                    // followed by one NOTICE per room (rnscommunity hub,
+                    // 2026-09). The accumulator handles both shapes; feed()
+                    // is the single production entry point and is unit-tested
+                    // against captured wire text.
+                    when (val result = roomListAccumulator.feed(event.body, SystemClock.elapsedRealtime())) {
+                        is RoomListAccumulator.FeedResult.ListComplete -> {
+                            Log.i(TAG, "Room list complete: ${result.rooms.size} rooms")
+                            _availableRooms.value = result.rooms
+                            _currentRoom.value?.let { displayRoom ->
+                                addMessage(displayRoom, ChatMessage(nick = null, body = result.displayBody, src = null, isNotice = true))
+                            }
+                            if (!result.passThroughBody) return
                         }
-                        Log.i(TAG, "Parsed ${rooms.size} available rooms: ${rooms.map { it.name }}")
-                        _availableRooms.value = rooms
-                        _currentRoom.value?.let { displayRoom ->
-                            addMessage(displayRoom, ChatMessage(nick = null, body = event.body, src = null, isNotice = true))
+                        is RoomListAccumulator.FeedResult.Updated -> {
+                            _availableRooms.value = result.rooms
+                            Log.i(TAG, "Room list line: ${result.rooms.last().name} (total ${result.rooms.size})")
+                            return
                         }
-                        return
-                    } else if (event.body == "No public rooms registered" ||
-                               event.body == "no rooms"
-                    ) {
+                        is RoomListAccumulator.FeedResult.Consumed -> {
+                            Log.i(TAG, "Room list header received, awaiting room lines")
+                            return
+                        }
+                        is RoomListAccumulator.FeedResult.Unrelated -> Unit
+                    }
+                    if (RrcListParse.isNoRooms(event.body)) {
                         Log.i(TAG, "No rooms registered on hub")
                         _availableRooms.value = emptyList()
                         _currentRoom.value?.let { displayRoom ->
@@ -1776,6 +1786,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     // Show CONNECTING so the UI reads as "reconnecting"
                     // rather than dead.
                     roomsToRejoin = _joinedRooms.value.toList()
+                    roomListAccumulator.clear()
                     Log.i(
                         TAG,
                         "Link dropped; scheduling auto-reconnect " +
@@ -1797,6 +1808,7 @@ class EridanusViewModel(application: Application) : AndroidViewModel(application
                     _roomMemberCounts.value = emptyMap()
                     _roomMemberList.value = emptyMap()
                     _hubGreetingMessage.value = null
+                    roomListAccumulator.clear()
                 }
             }
 
